@@ -25,7 +25,8 @@
         {
           "defaultChannel": "construction-updates"
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "extra": {
       "eas": {

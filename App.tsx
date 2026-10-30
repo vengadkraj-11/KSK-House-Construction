@@ -1,4 +1,8 @@
 import React, {useEffect, useMemo, useState} from 'react';
+import * as XLSX from 'xlsx';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView,
@@ -728,7 +732,7 @@ function ActivityScreen({activities, language}: any) {
 }
 
 
-function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed, onNotifications, onSignOut, onOriginal, language, onLanguageChange}: any) {
+function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed, onNotifications, onSignOut, onOriginal, language, onLanguageChange, onExportExcel, onExportPdf}: any) {
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 35}}>
     <View style={cardStyle({marginBottom: 12})}>
@@ -751,6 +755,32 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
         </Picker>
       </View>
     </View>
+
+    <View style={cardStyle({marginBottom: 12})}>
+      <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>
+        {t('Export project data', 'திட்டத் தரவை ஏற்றுமதி செய்க')}
+      </Text>
+      <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>
+        {t('Export all available worksheets into one Excel workbook or one PDF report.', 'அனைத்து பணித்தாள்களையும் ஒரே Excel கோப்பாக அல்லது PDF அறிக்கையாக ஏற்றுமதி செய்யவும்.')}
+      </Text>
+      <TouchableOpacity
+        onPress={onExportExcel}
+        style={{backgroundColor: C.green, padding: 13, borderRadius: 10, marginTop: 12}}
+      >
+        <Text style={{color: '#fff', fontWeight: '800', textAlign: 'center'}}>
+          {t('Export all data to Excel (.xlsx)', 'Excel கோப்பாக ஏற்றுமதி செய்க (.xlsx)')}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={onExportPdf}
+        style={{backgroundColor: C.blueBg, padding: 13, borderRadius: 10, marginTop: 8}}
+      >
+        <Text style={{color: C.ink, fontWeight: '800', textAlign: 'center'}}>
+          {t('Export all data to PDF (.pdf)', 'PDF கோப்பாக ஏற்றுமதி செய்க (.pdf)')}
+        </Text>
+      </TouchableOpacity>
+    </View>
+
     <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>{t('Cloud workbook', 'கிளவுட் பணிப்புத்தகம்')}</Text>
       <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>{syncCount} {t('workbook sheets currently stored in the cloud.', 'பணித்தாள்கள் தற்போது கிளவுடில் சேமிக்கப்பட்டுள்ளன.')}</Text>
@@ -947,6 +977,194 @@ export default function App() {
     );
   };
 
+  const exportExcel = async () => {
+    try {
+      const ids = Object.keys(sheets)
+        .filter(id => sheets[id]?.values)
+        .sort((a, b) => {
+          const ai = SHEET_ORDER.indexOf(a);
+          const bi = SHEET_ORDER.indexOf(b);
+          return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+        });
+
+      if (!ids.length) {
+        Alert.alert('No data', 'There are no worksheets to export.');
+        return;
+      }
+
+      const workbook = XLSX.utils.book_new();
+      const usedNames = new Set<string>();
+
+      ids.forEach(id => {
+        const sheet = sheets[id];
+        const baseName = (SHEET_TITLES[id] || sheet.name || id)
+          .replace(/[:\\/?*\[\]]/g, ' ')
+          .slice(0, 31);
+
+        let sheetName = baseName;
+        let number = 2;
+
+        while (usedNames.has(sheetName.toLowerCase())) {
+          const suffix = ` ${number++}`;
+          sheetName = baseName.slice(0, 31 - suffix.length) + suffix;
+        }
+
+        usedNames.add(sheetName.toLowerCase());
+
+        XLSX.utils.book_append_sheet(
+          workbook,
+          XLSX.utils.aoa_to_sheet(sheet.values || []),
+          sheetName
+        );
+      });
+
+      const base64 = XLSX.write(workbook, {
+        bookType: 'xlsx',
+        type: 'base64'
+      });
+
+      const fileUri =
+        `${FileSystem.cacheDirectory}KSK_House_Construction_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+      await FileSystem.writeAsStringAsync(fileUri, base64, {
+        encoding: FileSystem.EncodingType.Base64
+      });
+
+      if (!(await Sharing.isAvailableAsync())) {
+        throw new Error('File sharing is not available on this device.');
+      }
+
+      await Sharing.shareAsync(fileUri, {
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dialogTitle: 'Export KSK House Excel'
+      });
+    } catch (error: any) {
+      Alert.alert(
+        language === 'ta' ? 'Excel ஏற்றுமதி தோல்வியடைந்தது' : 'Excel export failed',
+        error?.message || 'Please try again.'
+      );
+    }
+  };
+
+  const exportPdf = async () => {
+    try {
+      const ids = Object.keys(sheets)
+        .filter(id => sheets[id]?.values)
+        .sort((a, b) => {
+          const ai = SHEET_ORDER.indexOf(a);
+          const bi = SHEET_ORDER.indexOf(b);
+          return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+        });
+
+      if (!ids.length) {
+        Alert.alert('No data', 'There are no worksheets to export.');
+        return;
+      }
+
+      const escapeHtml = (value: any) =>
+        String(value ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+
+      const sections = ids.map(id => {
+        const sheet = sheets[id];
+        const title = SHEET_TITLES[id] || sheet.name || id;
+
+        const rows = (sheet.values || []).map((row: any[], index: number) => {
+          const cells = (row || []).map((cell: any) => {
+            const tag = index === 0 ? 'th' : 'td';
+            return `<${tag}>${escapeHtml(cell)}</${tag}>`;
+          }).join('');
+
+          return `<tr>${cells}</tr>`;
+        }).join('');
+
+        return `
+          <section>
+            <h2>${escapeHtml(title)}</h2>
+            <table>
+              <tbody>${rows}</tbody>
+            </table>
+          </section>
+        `;
+      }).join('');
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <style>
+              body {
+                font-family: Arial, sans-serif;
+                padding: 20px;
+                color: #222;
+                font-size: 10px;
+              }
+              h1 {
+                font-size: 20px;
+                margin-bottom: 5px;
+              }
+              h2 {
+                font-size: 15px;
+                margin-top: 25px;
+                color: #245b45;
+              }
+              .date {
+                color: #666;
+                margin-bottom: 20px;
+              }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-bottom: 15px;
+              }
+              th, td {
+                border: 1px solid #ccc;
+                padding: 5px;
+                text-align: left;
+                word-break: break-word;
+              }
+              th {
+                background: #e8eee9;
+                font-weight: bold;
+              }
+              tr {
+                page-break-inside: avoid;
+              }
+            </style>
+          </head>
+          <body>
+            <h1>KSK House Construction</h1>
+            <div class="date">
+              Project data export: ${new Date().toLocaleDateString()}
+            </div>
+            ${sections}
+          </body>
+        </html>
+      `;
+
+      const result = await Print.printToFileAsync({html});
+
+      if (!(await Sharing.isAvailableAsync())) {
+        throw new Error('File sharing is not available on this device.');
+      }
+
+      await Sharing.shareAsync(result.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Export KSK House PDF'
+      });
+    } catch (error: any) {
+      Alert.alert(
+        language === 'ta' ? 'PDF ஏற்றுமதி தோல்வியடைந்தது' : 'PDF export failed',
+        error?.message || 'Please try again.'
+      );
+    }
+  };
+
   const doSeed = async () => {
     if (role !== 'owner' || !user) return;
     setInitialising(true);
@@ -999,7 +1217,7 @@ export default function App() {
     if (screen === 'Expenses') return <View style={{flex:1}}><SheetView sheetId="daily_expenses" sheet={sheets.daily_expenses} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('daily_expenses', index)} onAdd={() => startAdd('daily_expenses')} onDelete={(index: number) => deleteRecord('daily_expenses', index)} /></View>;
     if (screen === 'Progress') return <View style={{flex:1}}><SheetView sheetId="work_schedule" sheet={sheets.work_schedule} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('work_schedule', index)} onAdd={() => startAdd('work_schedule')} onDelete={(index: number) => deleteRecord('work_schedule', index)} /></View>;
     if (screen === 'Activity') return <ActivityScreen activities={activities} language={language}/>;
-    return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} language={language} onLanguageChange={changeLanguage} />;
+    return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} language={language} onLanguageChange={changeLanguage} onExportExcel={exportExcel} onExportPdf={exportPdf}/>;
   };
 
   return <SafeAreaView style={{flex: 1, backgroundColor: C.paper}}>
