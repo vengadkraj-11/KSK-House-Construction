@@ -202,11 +202,15 @@ function RecordCard({sheetId, sheet, row, rowIndex, canEdit, canDelete, onEdit, 
   const headers = headersForSheet(sheetId, sheet);
   const primaryIndex = titleIndex(headers, ['material / item', 'item / description', 'construction activity', 'service / fee head', 'expense / equipment', 'labour / contractor work', 'cost head', 'setting']);
   const primary = primaryIndex >= 0 ? displayCell(sheetId, sheet, rowIndex, primaryIndex) : row.find((v: any) => !isBlank(v));
-  const subIndices = headers.map((h, i) => ({h, i})).filter(x => x.i !== primaryIndex && x.h && !/notes|receipt|supplier|brand|vendor|contractor|person|payment/i.test(x.h)).slice(0, 3);
-  const info = subIndices.map(x => {
-    const value = displayCell(sheetId, sheet, rowIndex, x.i);
-    return !isBlank(value) ? `${x.h}: ${pretty(value, x.h)}` : '';
-  }).filter(Boolean);
+  const amountIndex = sheetId === 'daily_expenses' ? headers.findIndex(h => /amount\s*paid/i.test(h)) : -1;
+  const subIndices = headers.map((h, i) => ({h, i})).filter(x => x.i !== primaryIndex && x.i !== amountIndex && x.h && !/notes|receipt|supplier|brand|vendor|contractor|person|payment/i.test(x.h)).slice(0, 3);
+  const info = [
+    ...(amountIndex >= 0 ? [`${headers[amountIndex]}: ${pretty(displayCell(sheetId, sheet, rowIndex, amountIndex), headers[amountIndex])}`] : []),
+    ...subIndices.map(x => {
+      const value = displayCell(sheetId, sheet, rowIndex, x.i);
+      return !isBlank(value) ? `${x.h}: ${pretty(value, x.h)}` : '';
+    })
+  ].filter(Boolean);
   const formulaCount = (sheet.formulas?.[rowIndex] || []).filter(Boolean).length;
   return <View style={cardStyle({padding: 14, marginBottom: 9})}>
     <View style={{flexDirection: 'row', alignItems: 'flex-start'}}>
