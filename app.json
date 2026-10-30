@@ -9,19 +9,29 @@
     "android": {
       "package": "com.ksk.houseconstruction",
       "versionCode": 1,
-      "permissions": ["POST_NOTIFICATIONS", "INTERNET"],
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "INTERNET"
+      ],
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#112B28"
+        "backgroundColor": "#112B28",
+        "foregroundImage": "./assets/icon.png"
       }
     },
     "plugins": [
-      ["expo-notifications", {"defaultChannel": "construction-updates"}]
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "construction-updates"
+        }
+      ]
     ],
     "extra": {
       "eas": {
         "projectId": "e2484e3d-843a-46a9-a6a7-ce1f36783d54"
       }
-    }
+    },
+    "icon": "./assets/icon.png"
   }
 }
