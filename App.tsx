@@ -231,11 +231,72 @@ function RecordCard({sheetId, sheet, row, rowIndex, canEdit, canDelete, onEdit, 
 }
 
 function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDelete}: any) {
+  const [searchText, setSearchText] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({
+    category: '',
+    paymentMode: '',
+    paidBy: '',
+    billReceived: '',
+    dateFrom: '',
+    dateTo: ''
+  });
+
   if (!sheet) return <View style={{padding: 24}}><Text style={{color: C.muted}}>This sheet is not available in the cloud yet. The owner can initialise the workbook from Settings.</Text></View>;
+
   const headers = headersForSheet(sheetId, sheet);
   const readOnly = role !== 'owner' || ['project_dashboard', 'floor_summary'].includes(sheetId);
   const records = ['project_dashboard', 'floor_summary'].includes(sheetId) ? [] : meaningfulRows(sheet);
   const title = SHEET_TITLES[sheetId] || sheet.name;
+  const isDailyExpenses = sheetId === 'daily_expenses';
+
+  const columnIndex = (name: string) => headers.findIndex((h: string) => h?.toLowerCase() === name.toLowerCase());
+  const dateIndex = columnIndex('Date');
+
+  const filterFields = [
+    {key: 'category', label: 'Expense Category', header: 'Expense Category'},
+    {key: 'paymentMode', label: 'Payment Mode', header: 'Payment Mode'},
+    {key: 'paidBy', label: 'Paid By', header: 'Paid By'},
+    {key: 'billReceived', label: 'Bill Received?', header: 'Bill Received?'}
+  ];
+
+  const getOptions = (header: string) => {
+    const index = columnIndex(header);
+    if (index < 0) return [];
+    return Array.from(new Set(records.map(({row}: any) => String(row[index] ?? '').trim()).filter(Boolean))).sort();
+  };
+
+  const filteredRecords = isDailyExpenses ? records.filter(({row}: any) => {
+    const query = searchText.trim().toLowerCase();
+    if (query) {
+      const searchableText = row
+        .map((value: any) => String(value ?? ''))
+        .join(' ')
+        .toLowerCase();
+      if (!searchableText.includes(query)) return false;
+    }
+
+    for (const field of filterFields) {
+      const index = columnIndex(field.header);
+      if (filters[field.key as keyof typeof filters] && index >= 0 &&
+          String(row[index] ?? '') !== filters[field.key as keyof typeof filters]) return false;
+    }
+
+    if (filters.dateFrom || filters.dateTo) {
+      const date = dateIndex >= 0 ? excelSerialToDate(row[dateIndex]) : '';
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+      if (filters.dateFrom && date < filters.dateFrom) return false;
+      if (filters.dateTo && date > filters.dateTo) return false;
+    }
+
+    return true;
+  }) : records;
+
+  const clearFilters = () => {
+    setFilters({category: '', paymentMode: '', paidBy: '', billReceived: '', dateFrom: '', dateTo: ''});
+    setSearchText('');
+  };
+
   return <View style={{flex: 1}}>
     <View style={{paddingHorizontal: 16, paddingTop: 10, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
       <TouchableOpacity onPress={onBack} style={{padding: 8, marginLeft: -8}}><Text style={{fontSize: 14, color: C.green, fontWeight: '800'}}>‹ All sheets</Text></TouchableOpacity>
@@ -244,16 +305,71 @@ function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDe
     <ScrollView contentContainerStyle={{paddingHorizontal: 16, paddingBottom: 30}}>
       <View style={cardStyle({marginBottom: 13, padding: 14})}>
         <Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>{title}</Text>
-        <Text style={{fontSize: 11, color: C.muted, marginTop: 4}}>{records.length} populated record{records.length === 1 ? '' : 's'} · Imported from KSK_House_Cost.xlsx</Text>
+        <Text style={{fontSize: 11, color: C.muted, marginTop: 4}}>{isDailyExpenses ? `${filteredRecords.length} of ${records.length} records shown` : `${records.length} populated record${records.length === 1 ? '' : 's'}`} · Imported from KSK_House_Cost.xlsx</Text>
         {sheetId === 'project_setup' ? <Text style={{fontSize: 11, color: C.muted, marginTop: 6}}>Select a setting row to edit its value or notes.</Text> : null}
         {sheetId === 'project_dashboard' ? <DashboardFormulaSummary stats={calculateDashboard(allSheets || {})} /> : null}
         {sheetId === 'floor_summary' ? <FloorSummaryBlock sheets={allSheets || {}} /> : null}
       </View>
-      {records.length ? records.map(({row, index}: any) => <RecordCard key={`${sheetId}-${index}`} sheetId={sheetId} sheet={sheet} row={row} rowIndex={index} canEdit={!readOnly} canDelete={!readOnly && sheetId === 'daily_expenses'} onEdit={onEdit} onDelete={onDelete} />) : !['project_dashboard', 'floor_summary'].includes(sheetId) ? <View style={cardStyle()}><Text style={{color: C.muted, fontSize: 13}}>No records entered yet.</Text></View> : null}
+
+      {isDailyExpenses ? <>
+        <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 9}}>
+          <View style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 11, paddingHorizontal: 12}}>
+            <TextInput
+              value={searchText}
+              onChangeText={setSearchText}
+              placeholder="Search description, vendor, voucher, notes..."
+              placeholderTextColor={C.muted}
+              style={{fontSize: 13, color: C.ink, paddingVertical: 11}}
+              autoCapitalize="none"
+            />
+          </View>
+          <TouchableOpacity onPress={() => setShowFilters(value => !value)} style={{backgroundColor: C.green2, borderRadius: 11, paddingHorizontal: 14, paddingVertical: 13}}>
+            <Text style={{fontSize: 12, color: C.green, fontWeight: '800'}}>{showFilters ? 'Hide filters' : '⚙ Filters'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        {showFilters ? <View style={cardStyle({padding: 13, marginBottom: 12})}>
+          <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8}}>
+            <Text style={{fontSize: 13, color: C.ink, fontWeight: '800'}}>Filter expenses</Text>
+            <TouchableOpacity onPress={clearFilters}><Text style={{fontSize: 11, color: C.green, fontWeight: '800'}}>Clear all</Text></TouchableOpacity>
+          </View>
+          {filterFields.map(field => <View key={field.key} style={{marginBottom: 9}}>
+            <Text style={{fontSize: 11, color: C.muted, fontWeight: '700', marginBottom: 4}}>{field.label}</Text>
+            <View style={{backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, overflow: 'hidden'}}>
+              <Picker
+                selectedValue={filters[field.key as keyof typeof filters]}
+                onValueChange={value => setFilters(previous => ({...previous, [field.key]: value}))}
+                style={{color: C.ink}}
+              >
+                <Picker.Item label={`All ${field.label}`} value="" />
+                {getOptions(field.header).map(option => <Picker.Item key={option} label={option} value={option} />)}
+              </Picker>
+            </View>
+          </View>)}
+          <Text style={{fontSize: 11, color: C.muted, fontWeight: '700', marginBottom: 5}}>Date range (YYYY-MM-DD)</Text>
+          <View style={{flexDirection: 'row', gap: 8}}>
+            <TextInput
+              value={filters.dateFrom}
+              onChangeText={value => setFilters(previous => ({...previous, dateFrom: value}))}
+              placeholder="From date"
+              placeholderTextColor={C.muted}
+              style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, color: C.ink, fontSize: 12}}
+            />
+            <TextInput
+              value={filters.dateTo}
+              onChangeText={value => setFilters(previous => ({...previous, dateTo: value}))}
+              placeholder="To date"
+              placeholderTextColor={C.muted}
+              style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, color: C.ink, fontSize: 12}}
+            />
+          </View>
+        </View> : null}
+      </> : null}
+
+      {filteredRecords.length ? filteredRecords.map(({row, index}: any) => <RecordCard key={`${sheetId}-${index}`} sheetId={sheetId} sheet={sheet} row={row} rowIndex={index} canEdit={!readOnly} canDelete={!readOnly && sheetId === 'daily_expenses'} onEdit={onEdit} onDelete={onDelete} />) : !['project_dashboard', 'floor_summary'].includes(sheetId) ? <View style={cardStyle()}><Text style={{color: C.muted, fontSize: 13}}>{isDailyExpenses && (searchText || Object.values(filters).some(Boolean)) ? 'No expenses match your search or filters.' : 'No records entered yet.'}</Text></View> : null}
     </ScrollView>
   </View>;
 }
-
 function DashboardFormulaSummary({stats}: any) {
   const cells = [
     ['Materials', stats.materialsBudget, stats.materialsPaid],
