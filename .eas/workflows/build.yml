@@ -1,0 +1,13 @@
+name: Build KSK Android APK
+
+on:
+  push:
+    branches: ['main']
+
+jobs:
+  build_android:
+    name: Build KSK House Construction
+    type: build
+    params:
+      platform: android
+      profile: preview
