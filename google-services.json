@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "873877232505",
+    "project_id": "ksk-house-construction",
+    "storage_bucket": "ksk-house-construction.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:873877232505:android:015021464c04a1aba0eda8",
+        "android_client_info": {
+          "package_name": "com.ksk.houseconstruction"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_UKABLctgeR_iDnIOMalsKDTd1Ac3zdQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

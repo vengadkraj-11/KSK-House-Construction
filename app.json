@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "KSK House",
+    "slug": "ksk-house-construction",
+    "scheme": "kskhouse",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "android": {
+      "package": "com.ksk.houseconstruction",
+      "versionCode": 1,
+      "permissions": ["POST_NOTIFICATIONS", "INTERNET"],
+      "googleServicesFile": "./google-services.json",
+      "adaptiveIcon": {
+        "backgroundColor": "#112B28"
+      }
+    },
+    "plugins": [
+      ["expo-notifications", {"defaultChannel": "construction-updates"}]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    }
+  }
+}
