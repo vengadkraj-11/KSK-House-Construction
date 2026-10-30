@@ -328,7 +328,6 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
                     'Expense Category': ['Material', 'Engineer/Architect', 'Labour', 'Equipment', 'Transport', 'Other'],
                     'Payment Mode': ['UPI', 'Bank Transfer', 'Cash', 'Cheque'],
                     'Paid By': ['Vengadesh', 'Kanakaraj'],
-                    'Received by': ['Kanakaraj', 'Shanmugapandi'],
                     'Bill Received?': ['Yes', 'No']
                   };
                   const options = sheetId === 'daily_expenses' ? optionsByHeader[h] : undefined;
