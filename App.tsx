@@ -1,4 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView,
   StatusBar, Text, TextInput, TouchableOpacity, View
@@ -107,7 +108,10 @@ function MetricCard({label, value, helper, accent = false}: any) {
   </View>;
 }
 
-function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense}: any) {
+
+function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, language}: any) {
+  const t = (en: string, ta: string) => language === 'ta' ? ta : en;
+
   const stats = calculateDashboard(sheets);
   const setup = sheets.project_setup?.values || [];
   const project = setup?.[1]?.[1] || 'KSK';
@@ -115,79 +119,141 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense}: 
   const builtUp = n(setup?.[4]?.[1]) + n(setup?.[5]?.[1]);
   const materialStats = countMaterials(sheets);
   const pctSpent = stats.totalBudget > 0 ? Math.min(100, stats.totalPaid / stats.totalBudget * 100) : 0;
+
+  const translatedSync = language === 'ta'
+    ? ({
+        'LIVE SYNC': 'நேரடி ஒத்திசைவு',
+        'SAVING': 'சேமிக்கிறது',
+        'PREVIEW': 'முன்னோட்டம்',
+        'LOCAL PREVIEW': 'உள்ளூர் முன்னோட்டம்',
+        'SYNC ERROR': 'ஒத்திசைவு பிழை',
+        'CONNECTING': 'இணைக்கிறது'
+      } as Record<string, string>)[syncLabel] || syncLabel
+    : syncLabel;
+
   return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 30}}>
     <View style={{backgroundColor: C.dark, borderRadius: 22, padding: 19, marginBottom: 15}}>
       <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
         <View>
-          <Text style={{color: '#BBD1C8', fontSize: 11, fontWeight: '800', letterSpacing: 1}}>HOUSE CONSTRUCTION</Text>
-          <Text style={{color: '#FFFFFF', fontSize: 25, fontWeight: '900', marginTop: 5}}>{project} Project</Text>
-          <Text style={{color: '#D0E0D9', fontSize: 13, marginTop: 4}}>{location} · {builtUp.toLocaleString('en-IN')} sq ft · G + 1</Text>
+          <Text style={{color: '#BBD1C8', fontSize: 11, fontWeight: '800', letterSpacing: 1}}>
+            {t('HOUSE CONSTRUCTION', 'வீடு கட்டுமானம்')}
+          </Text>
+          <Text style={{color: '#FFFFFF', fontSize: 25, fontWeight: '900', marginTop: 5}}>
+            {project} {t('Project', 'திட்டம்')}
+          </Text>
+          <Text style={{color: '#D0E0D9', fontSize: 13, marginTop: 4}}>
+            {location} · {builtUp.toLocaleString('en-IN')} {t('sq ft', 'சதுர அடி')} · {t('G + 1', 'தரை + முதல் தளம்')}
+          </Text>
         </View>
-        <View style={{width: 52, height: 52, borderRadius: 17, backgroundColor: '#274C45', alignItems: 'center', justifyContent: 'center'}}><Text style={{color: '#FFF', fontSize: 17, fontWeight: '900'}}>KSK</Text></View>
+        <View style={{width: 52, height: 52, borderRadius: 17, backgroundColor: '#274C45', alignItems: 'center', justifyContent: 'center'}}>
+          <Text style={{color: '#FFF', fontSize: 17, fontWeight: '900'}}>KSK</Text>
+        </View>
       </View>
+
       <View style={{marginTop: 18, borderTopColor: '#31564F', borderTopWidth: 1, paddingTop: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
-        <View style={{flexDirection: 'row', alignItems: 'center', gap: 6}}><View style={{width: 7, height: 7, borderRadius: 5, backgroundColor: syncLabel === 'LIVE SYNC' ? '#6DD3A5' : '#E8B968'}}/><Text style={{color: '#D0E0D9', fontSize: 11, fontWeight: '800'}}>{syncLabel}</Text></View>
-        <Pill color={role === 'owner' ? '#D8EBE1' : '#EAF0F7'} textColor={role === 'owner' ? '#1C6255' : '#365775'}>{role === 'owner' ? 'OWNER · EDITOR' : role === 'viewer' ? 'FAMILY · VIEW ONLY' : 'LOCAL PREVIEW'}</Pill>
+        <View style={{flexDirection: 'row', alignItems: 'center', gap: 6}}>
+          <View style={{width: 7, height: 7, borderRadius: 5, backgroundColor: syncLabel === 'LIVE SYNC' ? '#6DD3A5' : '#E8B968'}}/>
+          <Text style={{color: '#D0E0D9', fontSize: 11, fontWeight: '800'}}>{translatedSync}</Text>
+        </View>
+        <Pill color={role === 'owner' ? '#D8EBE1' : '#EAF0F7'} textColor={role === 'owner' ? '#1C6255' : '#365775'}>
+          {role === 'owner'
+            ? t('OWNER · EDITOR', 'உரிமையாளர் · திருத்துபவர்')
+            : role === 'viewer'
+              ? t('FAMILY · VIEW ONLY', 'குடும்பம் · பார்வைக்கு மட்டும்')
+              : t('LOCAL PREVIEW', 'உள்ளூர் முன்னோட்டம்')}
+        </Pill>
       </View>
     </View>
 
     <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 15}}>
-      <MetricCard label="Estimated budget" value={money(stats.totalBudget)} helper={`Includes ${money(stats.contingency)} contingency`} accent />
-      <MetricCard label="Paid so far" value={money(stats.totalPaid)} helper={`${pctSpent.toFixed(1)}% of total budget`} />
-      <MetricCard label="Balance budget" value={money(stats.totalRemaining)} helper="Budget remaining" />
-      <MetricCard label="Construction progress" value={`${Math.round(stats.progress)}%`} helper="Average across scheduled activities" />
+      <MetricCard label={t('Estimated budget', 'மதிப்பிடப்பட்ட பட்ஜெட்')} value={money(stats.totalBudget)} helper={`${t('Includes', 'இதில்')} ${money(stats.contingency)} ${t('contingency', 'எதிர்பாராத செலவு')}`} accent />
+      <MetricCard label={t('Paid so far', 'இதுவரை செலுத்தியது')} value={money(stats.totalPaid)} helper={`${pctSpent.toFixed(1)}% ${t('of total budget', 'மொத்த பட்ஜெட்டில்')}`} />
+      <MetricCard label={t('Balance budget', 'மீதமுள்ள பட்ஜெட்')} value={money(stats.totalRemaining)} helper={t('Budget remaining', 'மீதமுள்ள தொகை')} />
+      <MetricCard label={t('Construction progress', 'கட்டுமான முன்னேற்றம்')} value={`${Math.round(stats.progress)}%`} helper={t('Average across scheduled activities', 'திட்டமிட்ட பணிகளின் சராசரி')} />
     </View>
 
     <View style={cardStyle({marginBottom: 14})}>
-      <SectionTitle title="Budget utilisation" right="View breakdown" onRight={() => onOpen('floor_summary')} />
-      <View style={{height: 10, backgroundColor: '#EAF0EC', borderRadius: 8, overflow: 'hidden'}}><View style={{height: 10, width: `${pctSpent}%`, backgroundColor: C.green, borderRadius: 8}} /></View>
+      <SectionTitle title={t('Budget utilisation', 'பட்ஜெட் பயன்பாடு')} right={t('View breakdown', 'விரிவாகப் பார்க்க')} onRight={() => onOpen('floor_summary')} />
+      <View style={{height: 10, backgroundColor: '#EAF0EC', borderRadius: 8, overflow: 'hidden'}}>
+        <View style={{height: 10, width: `${pctSpent}%`, backgroundColor: C.green, borderRadius: 8}} />
+      </View>
       <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 10}}>
-        <Text style={{fontSize: 11, color: C.muted}}>Paid {money(stats.totalPaid)}</Text>
-        <Text style={{fontSize: 11, color: C.muted}}>Budget {money(stats.totalBudget)}</Text>
+        <Text style={{fontSize: 11, color: C.muted}}>{t('Paid', 'செலுத்தியது')} {money(stats.totalPaid)}</Text>
+        <Text style={{fontSize: 11, color: C.muted}}>{t('Budget', 'பட்ஜெட்')} {money(stats.totalBudget)}</Text>
       </View>
       <View style={{marginTop: 14, gap: 10}}>
         {[
-          ['Materials', stats.materialsBudget, stats.materialsPaid],
-          ['Labour & subcontractors', stats.labourBudget, stats.labourPaid],
-          ['Engineer / professional fees', stats.feesBudget, stats.feesPaid],
-          ['Equipment & misc.', stats.miscBudget, stats.miscPaid]
+          [t('Materials', 'பொருட்கள்'), stats.materialsBudget, stats.materialsPaid],
+          [t('Labour & subcontractors', 'தொழிலாளர்கள் மற்றும் துணை ஒப்பந்ததாரர்கள்'), stats.labourBudget, stats.labourPaid],
+          [t('Engineer / professional fees', 'பொறியாளர் / தொழில்முறை கட்டணங்கள்'), stats.feesBudget, stats.feesPaid],
+          [t('Equipment & misc.', 'உபகரணங்கள் மற்றும் இதர செலவுகள்'), stats.miscBudget, stats.miscPaid]
         ].map(([label, budget, paid]: any) => <View key={label}>
-          <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4}}><Text style={{fontSize: 12, color: C.ink, fontWeight: '700'}}>{label}</Text><Text style={{fontSize: 12, color: C.muted}}>{money(paid)} / {money(budget)}</Text></View>
-          <View style={{height: 5, backgroundColor: '#EEF2EF', borderRadius: 5}}><View style={{height: 5, width: `${budget ? Math.min(100, paid / budget * 100) : 0}%`, backgroundColor: C.green, borderRadius: 5}}/></View>
+          <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4}}>
+            <Text style={{fontSize: 12, color: C.ink, fontWeight: '700'}}>{label}</Text>
+            <Text style={{fontSize: 12, color: C.muted}}>{money(paid)} / {money(budget)}</Text>
+          </View>
+          <View style={{height: 5, backgroundColor: '#EEF2EF', borderRadius: 5}}>
+            <View style={{height: 5, width: `${budget ? Math.min(100, paid / budget * 100) : 0}%`, backgroundColor: C.green, borderRadius: 5}}/>
+          </View>
         </View>)}
       </View>
     </View>
 
     <View style={{flexDirection: 'row', gap: 10, marginBottom: 14}}>
-      <View style={cardStyle({flex: 1})}><Text style={{fontSize: 11, color: C.muted, fontWeight: '700'}}>MATERIAL STOCK LINES</Text><Text style={{fontSize: 24, fontWeight: '900', color: C.ink, marginTop: 8}}>{materialStats.stockLines}</Text><Text style={{fontSize: 11, color: C.muted, marginTop: 4}}>{materialStats.received.toLocaleString('en-IN')} received units logged</Text></View>
-      <View style={cardStyle({flex: 1})}><Text style={{fontSize: 11, color: C.muted, fontWeight: '700'}}>DAILY EXPENSES</Text><Text style={{fontSize: 24, fontWeight: '900', color: C.ink, marginTop: 8}}>{money(stats.dailyExpenses)}</Text><Text style={{fontSize: 11, color: C.muted, marginTop: 4}}>Across {meaningfulRows(sheets.daily_expenses || {values:[],formulas:[],name:'',range:''}).length} payment entries</Text></View>
+      <View style={cardStyle({flex: 1})}>
+        <Text style={{fontSize: 11, color: C.muted, fontWeight: '700'}}>{t('MATERIAL STOCK LINES', 'பொருள் இருப்புப் பதிவுகள்')}</Text>
+        <Text style={{fontSize: 24, fontWeight: '900', color: C.ink, marginTop: 8}}>{materialStats.stockLines}</Text>
+        <Text style={{fontSize: 11, color: C.muted, marginTop: 4}}>{materialStats.received.toLocaleString('en-IN')} {t('received units logged', 'பெறப்பட்ட அலகுகள் பதிவு செய்யப்பட்டுள்ளன')}</Text>
+      </View>
+      <View style={cardStyle({flex: 1})}>
+        <Text style={{fontSize: 11, color: C.muted, fontWeight: '700'}}>{t('DAILY EXPENSES', 'தினசரி செலவுகள்')}</Text>
+        <Text style={{fontSize: 24, fontWeight: '900', color: C.ink, marginTop: 8}}>{money(stats.dailyExpenses)}</Text>
+        <Text style={{fontSize: 11, color: C.muted, marginTop: 4}}>
+          {t('Across', 'மொத்தம்')} {meaningfulRows(sheets.daily_expenses || {values: [], formulas: [], name: '', range: ''}).length} {t('payment entries', 'கட்டணப் பதிவுகள்')}
+        </Text>
+      </View>
     </View>
 
     <View style={cardStyle({marginBottom: 14})}>
-      <SectionTitle title="Quick actions" />
+      <SectionTitle title={t('Quick actions', 'விரைவான செயல்கள்')} />
       <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 9}}>
-        <TouchableOpacity onPress={onAddExpense} style={{...buttonStyle(role !== 'owner'), flex: 1, minWidth: 125, opacity: role === 'owner' ? 1 : 0.55}}><Text style={{fontWeight: '800', color: '#FFF'}}>＋ Add expense</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => onOpen('materials_boq')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}><Text style={{fontWeight: '800', color: C.green}}>▤ Materials</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => onOpen('labour_work')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}><Text style={{fontWeight: '800', color: C.green}}>♧ Labour</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => onOpen('professional_fees')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}><Text style={{fontWeight: '800', color: C.green}}>▣ Professional fees</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => onOpen('work_schedule')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}><Text style={{fontWeight: '800', color: C.green}}>◷ Work progress</Text></TouchableOpacity>
+        <TouchableOpacity onPress={onAddExpense} style={{...buttonStyle(role !== 'owner'), flex: 1, minWidth: 125, opacity: role === 'owner' ? 1 : 0.55}}>
+          <Text style={{fontWeight: '800', color: '#FFF'}}>＋ {t('Add expense', 'செலவைச் சேர்')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onOpen('materials_boq')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}>
+          <Text style={{fontWeight: '800', color: C.green}}>▤ {t('Materials', 'பொருட்கள்')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onOpen('labour_work')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}>
+          <Text style={{fontWeight: '800', color: C.green}}>♧ {t('Labour', 'தொழிலாளர்கள்')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onOpen('professional_fees')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}>
+          <Text style={{fontWeight: '800', color: C.green}}>▣ {t('Professional fees', 'தொழில்முறை கட்டணங்கள்')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onOpen('work_schedule')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}>
+          <Text style={{fontWeight: '800', color: C.green}}>◷ {t('Work progress', 'வேலை முன்னேற்றம்')}</Text>
+        </TouchableOpacity>
       </View>
     </View>
 
     <View style={cardStyle()}>
-      <SectionTitle title="Recent project updates" />
-      {activities.length ? activities.slice(0, 4).map((item: ActivityItem) => <View key={item.id} style={{paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.line}}><Text style={{fontSize: 13, fontWeight: '800', color: C.ink}}>{item.title || 'Project updated'}</Text><Text style={{fontSize: 11, color: C.muted, marginTop: 3}}>{item.body || 'Workbook data changed'}</Text></View>) : <Text style={{fontSize: 12, color: C.muted}}>Updates will appear here after cloud sync is connected.</Text>}
+      <SectionTitle title={t('Recent project updates', 'சமீபத்திய திட்டப் புதுப்பிப்புகள்')} />
+      {activities.length ? activities.slice(0, 4).map((item: ActivityItem) => <View key={item.id} style={{paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.line}}>
+        <Text style={{fontSize: 13, fontWeight: '800', color: C.ink}}>{item.title || t('Project updated', 'திட்டம் புதுப்பிக்கப்பட்டது')}</Text>
+        <Text style={{fontSize: 11, color: C.muted, marginTop: 3}}>{item.body || t('Workbook data changed', 'பணிப்புத்தகத் தரவு மாற்றப்பட்டது')}</Text>
+      </View>) : <Text style={{fontSize: 12, color: C.muted}}>{t('Updates will appear here after cloud sync is connected.', 'கிளவுட் ஒத்திசைப்பு இணைக்கப்பட்டதும் புதுப்பிப்புகள் இங்கே தோன்றும்.')}</Text>}
     </View>
   </ScrollView>;
 }
 
-function SheetMenu({onOpen}: any) {
+
+function SheetMenu({onOpen, language}: any) {
+  const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 35}}>
-    <Text style={{fontSize: 13, color: C.muted, lineHeight: 19, marginBottom: 15}}>All 11 tabs from the workbook are available here. Quote comparison is added as a separate module because it is referenced in the workbook instructions but not present as an Excel tab.</Text>
+    <Text style={{fontSize: 13, color: C.muted, lineHeight: 19, marginBottom: 15}}>{t('All 11 tabs from the workbook are available here. Quote comparison is added as a separate module because it is referenced in the workbook instructions but not present as an Excel tab.', 'பணிப்புத்தகத்தில் உள்ள 11 தாவல்களும் இங்கே கிடைக்கும். மேற்கோள் ஒப்பீடு தனிப் பகுதியாகச் சேர்க்கப்பட்டுள்ளது.')}</Text>
     <View style={{gap: 9}}>
       {[...SHEET_ORDER, 'quotation_compare'].map(id => <TouchableOpacity key={id} onPress={() => onOpen(id)} style={{...cardStyle({padding: 15}), flexDirection: 'row', alignItems: 'center'}}>
         <View style={{width: 42, height: 42, borderRadius: 14, backgroundColor: C.green2, alignItems: 'center', justifyContent: 'center', marginRight: 13}}><Text style={{fontSize: 20, color: C.green, fontWeight: '800'}}>{ICONS[id]}</Text></View>
-        <View style={{flex: 1}}><Text style={{fontSize: 14, fontWeight: '800', color: C.ink}}>{SHEET_TITLES[id]}</Text><Text style={{fontSize: 11, color: C.muted, marginTop: 3}}>{id === 'quotation_compare' ? 'Compare up to three supplier quotations' : 'Open worksheet and manage records'}</Text></View>
+        <View style={{flex: 1}}><Text style={{fontSize: 14, fontWeight: '800', color: C.ink}}>{SHEET_TITLES[id]}</Text><Text style={{fontSize: 11, color: C.muted, marginTop: 3}}>{id === 'quotation_compare' ? t('Compare up to three supplier quotations', 'மூன்று சப்ளையர்களின் விலைப்புள்ளிகளை ஒப்பிடவும்') : t('Open worksheet and manage records', 'பணித்தாளைத் திறந்து பதிவுகளை நிர்வகிக்கவும்')}</Text></View>
         <Text style={{fontSize: 20, color: C.muted}}>›</Text>
       </TouchableOpacity>)}
     </View>
@@ -198,7 +264,8 @@ function titleIndex(headers: string[], candidates: string[]) {
   return headers.findIndex(h => candidates.some(c => h.toLowerCase().includes(c)));
 }
 
-function RecordCard({sheetId, sheet, row, rowIndex, canEdit, canDelete, onEdit, onDelete}: any) {
+function RecordCard({sheetId, sheet, row, rowIndex, canEdit, canDelete, onEdit, onDelete, language}: any) {
+  const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   const headers = headersForSheet(sheetId, sheet);
   const primaryIndex = titleIndex(headers, ['material / item', 'item / description', 'construction activity', 'service / fee head', 'expense / equipment', 'labour / contractor work', 'cost head', 'setting']);
   const primary = primaryIndex >= 0 ? displayCell(sheetId, sheet, rowIndex, primaryIndex) : row.find((v: any) => !isBlank(v));
@@ -215,50 +282,42 @@ function RecordCard({sheetId, sheet, row, rowIndex, canEdit, canDelete, onEdit, 
   return <View style={cardStyle({padding: 14, marginBottom: 9})}>
     <View style={{flexDirection: 'row', alignItems: 'flex-start'}}>
       <View style={{flex: 1}}>
-        <Text style={{fontSize: 14, color: C.ink, fontWeight: '800'}}>{String(primary || 'Untitled record')}</Text>
+        <Text style={{fontSize: 14, color: C.ink, fontWeight: '800'}}>{String(primary || t('Untitled record', 'பெயரிடப்படாத பதிவு'))}</Text>
         {info.slice(0, 2).map((item, i) => <Text key={i} style={{fontSize: 11, color: C.muted, marginTop: 4}}>{item}</Text>)}
       </View>
       {canEdit ? <View style={{flexDirection: 'row', gap: 6}}>
-        <TouchableOpacity onPress={() => onEdit(rowIndex)} style={{paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: C.green2}}><Text style={{fontSize: 11, color: C.green, fontWeight: '800'}}>Edit</Text></TouchableOpacity>
-        {canDelete ? <TouchableOpacity onPress={() => onDelete(rowIndex)} style={{paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: '#FDECEC'}}><Text style={{fontSize: 11, color: '#B42318', fontWeight: '800'}}>Delete</Text></TouchableOpacity> : null}
-      </View> : <Pill color={C.blueBg} textColor="#365775">VIEW</Pill>}
+        <TouchableOpacity onPress={() => onEdit(rowIndex)} style={{paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: C.green2}}><Text style={{fontSize: 11, color: C.green, fontWeight: '800'}}>{t('Edit', 'திருத்து')}</Text></TouchableOpacity>
+        {canDelete ? <TouchableOpacity onPress={() => onDelete(rowIndex)} style={{paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: '#FDECEC'}}><Text style={{fontSize: 11, color: '#B42318', fontWeight: '800'}}>{t('Delete', 'நீக்கு')}</Text></TouchableOpacity> : null}
+      </View> : <Pill color={C.blueBg} textColor="#365775">{t('VIEW', 'பார்வை')}</Pill>}
     </View>
     {info.length > 2 || formulaCount ? <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10}}>
       {info.slice(2).map((item, i) => <Pill key={i}>{item}</Pill>)}
-      {formulaCount ? <Pill color={C.goldBg} textColor={C.gold}>{formulaCount} formula field{formulaCount > 1 ? 's' : ''}</Pill> : null}
+      {formulaCount ? <Pill color={C.goldBg} textColor={C.gold}>{language === 'ta' ? `${formulaCount} கணக்கீட்டு புலங்கள்` : `${formulaCount} formula field${formulaCount > 1 ? 's' : ''}`}</Pill> : null}
     </View> : null}
   </View>;
 }
 
-function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDelete}: any) {
+function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDelete, language}: any) {
+  const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   const [searchText, setSearchText] = useState('');
   const [showFilters, setShowFilters] = useState(false);
-  const [filters, setFilters] = useState({
-    category: '',
-    paymentMode: '',
-    paidBy: '',
-    billReceived: '',
-    dateFrom: '',
-    dateTo: ''
-  });
+  const [filters, setFilters] = useState<Record<string, string>>({});
 
-  if (!sheet) return <View style={{padding: 24}}><Text style={{color: C.muted}}>This sheet is not available in the cloud yet. The owner can initialise the workbook from Settings.</Text></View>;
+  if (!sheet) return <View style={{padding: 24}}><Text style={{color: C.muted}}>{language === 'ta' ? 'இந்தப் பணித்தாள் இன்னும் கிளவுடில் இல்லை. உரிமையாளர் அமைப்புகளில் இருந்து பணிப்புத்தகத்தைத் தொடங்கலாம்.' : 'This sheet is not available in the cloud yet. The owner can initialise the workbook from Settings.'}</Text></View>;
 
   const headers = headersForSheet(sheetId, sheet);
   const readOnly = role !== 'owner' || ['project_dashboard', 'floor_summary'].includes(sheetId);
   const records = ['project_dashboard', 'floor_summary'].includes(sheetId) ? [] : meaningfulRows(sheet);
   const title = SHEET_TITLES[sheetId] || sheet.name;
   const isDailyExpenses = sheetId === 'daily_expenses';
+  const isSummary = ['project_dashboard', 'floor_summary'].includes(sheetId);
 
   const columnIndex = (name: string) => headers.findIndex((h: string) => h?.toLowerCase() === name.toLowerCase());
   const dateIndex = columnIndex('Date');
 
-  const filterFields = [
-    {key: 'category', label: 'Expense Category', header: 'Expense Category'},
-    {key: 'paymentMode', label: 'Payment Mode', header: 'Payment Mode'},
-    {key: 'paidBy', label: 'Paid By', header: 'Paid By'},
-    {key: 'billReceived', label: 'Bill Received?', header: 'Bill Received?'}
-  ];
+  const filterFields = headers
+    .filter((header: string) => header && /floor|area|stage|status|unit|category|payment mode|paid by|bill received|supplier|contractor|responsible person|construction activity|work type|specification/i.test(header))
+    .map((header: string) => ({key: header, label: header, header}));
 
   const getOptions = (header: string) => {
     const index = columnIndex(header);
@@ -266,111 +325,111 @@ function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDe
     return Array.from(new Set(records.map(({row}: any) => String(row[index] ?? '').trim()).filter(Boolean))).sort();
   };
 
-  const filteredRecords = isDailyExpenses ? records.filter(({row}: any) => {
+  const filteredRecords = records.filter(({row}: any) => {
     const query = searchText.trim().toLowerCase();
     if (query) {
-      const searchableText = row
-        .map((value: any) => String(value ?? ''))
-        .join(' ')
-        .toLowerCase();
+      const searchableText = row.map((value: any) => String(value ?? '')).join(' ').toLowerCase();
       if (!searchableText.includes(query)) return false;
     }
 
     for (const field of filterFields) {
+      const selected = filters[field.key];
       const index = columnIndex(field.header);
-      if (filters[field.key as keyof typeof filters] && index >= 0 &&
-          String(row[index] ?? '') !== filters[field.key as keyof typeof filters]) return false;
+      if (selected && index >= 0 && String(row[index] ?? '') !== selected) return false;
     }
 
     if (filters.dateFrom || filters.dateTo) {
       const date = dateIndex >= 0 ? excelSerialToDate(row[dateIndex]) : '';
-      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+      if (!date || !/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) return false;
       if (filters.dateFrom && date < filters.dateFrom) return false;
       if (filters.dateTo && date > filters.dateTo) return false;
     }
 
     return true;
-  }) : records;
+  });
 
   const clearFilters = () => {
-    setFilters({category: '', paymentMode: '', paidBy: '', billReceived: '', dateFrom: '', dateTo: ''});
+    setFilters({});
     setSearchText('');
   };
 
   return <View style={{flex: 1}}>
     <View style={{paddingHorizontal: 16, paddingTop: 10, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
-      <TouchableOpacity onPress={onBack} style={{padding: 8, marginLeft: -8}}><Text style={{fontSize: 14, color: C.green, fontWeight: '800'}}>‹ All sheets</Text></TouchableOpacity>
-      {!readOnly ? <TouchableOpacity onPress={onAdd} style={{...buttonStyle(), paddingVertical: 9}}><Text style={{fontSize: 12, color: '#FFF', fontWeight: '800'}}>＋ Add record</Text></TouchableOpacity> : <Pill color={C.blueBg} textColor="#365775">READ ONLY</Pill>}
+      <TouchableOpacity onPress={onBack} style={{padding: 8, marginLeft: -8}}><Text style={{fontSize: 14, color: C.green, fontWeight: '800'}}>{t('‹ All sheets', '‹ அனைத்து பணித்தாள்களும்')}</Text></TouchableOpacity>
+      {!readOnly ? <TouchableOpacity onPress={onAdd} style={{...buttonStyle(), paddingVertical: 9}}><Text style={{fontSize: 12, color: '#FFF', fontWeight: '800'}}>{t('＋ Add record', '＋ பதிவு சேர்')}</Text></TouchableOpacity> : <Pill color={C.blueBg} textColor="#365775">{t('READ ONLY', 'படிக்க மட்டும்')}</Pill>}
     </View>
     <ScrollView contentContainerStyle={{paddingHorizontal: 16, paddingBottom: 30}}>
       <View style={cardStyle({marginBottom: 13, padding: 14})}>
         <Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>{title}</Text>
-        <Text style={{fontSize: 11, color: C.muted, marginTop: 4}}>{isDailyExpenses ? `${filteredRecords.length} of ${records.length} records shown` : `${records.length} populated record${records.length === 1 ? '' : 's'}`} · Imported from KSK_House_Cost.xlsx</Text>
-        {sheetId === 'project_setup' ? <Text style={{fontSize: 11, color: C.muted, marginTop: 6}}>Select a setting row to edit its value or notes.</Text> : null}
-        {sheetId === 'project_dashboard' ? <DashboardFormulaSummary stats={calculateDashboard(allSheets || {})} /> : null}
-        {sheetId === 'floor_summary' ? <FloorSummaryBlock sheets={allSheets || {}} /> : null}
+        <Text style={{fontSize: 11, color: C.muted, marginTop: 4}}>{language === 'ta' ? (!isSummary ? `${filteredRecords.length} / ${records.length} பதிவுகள் காட்டப்படுகின்றன` : `${records.length} பதிவுகள்`) : (!isSummary ? `${filteredRecords.length} of ${records.length} records shown` : `${records.length} populated record${records.length === 1 ? '' : 's'}`)} · {t('Imported from KSK_House_Cost.xlsx', 'KSK_House_Cost.xlsx இலிருந்து இறக்குமதி செய்யப்பட்டது')}</Text>
+        {sheetId === 'project_setup' ? <Text style={{fontSize: 11, color: C.muted, marginTop: 6}}>{t('Select a setting row to edit its value or notes.', 'அதன் மதிப்பு அல்லது குறிப்புகளைத் திருத்த ஒரு அமைப்பு வரியைத் தேர்ந்தெடுக்கவும்.')}</Text> : null}
+        {sheetId === 'project_dashboard' ? <DashboardFormulaSummary stats={calculateDashboard(allSheets || {})} language={language} /> : null}
+        {sheetId === 'floor_summary' ? <FloorSummaryBlock sheets={allSheets || {}} language={language} /> : null}
       </View>
 
-      {isDailyExpenses ? <>
+      {!isSummary ? <>
         <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 9}}>
           <View style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 11, paddingHorizontal: 12}}>
             <TextInput
               value={searchText}
               onChangeText={setSearchText}
-              placeholder="Search description, vendor, voucher, notes..."
+              placeholder={language === "ta" ? `${title} தேடுக...` : `Search ${title.toLowerCase()}...`}
               placeholderTextColor={C.muted}
               style={{fontSize: 13, color: C.ink, paddingVertical: 11}}
               autoCapitalize="none"
             />
           </View>
           <TouchableOpacity onPress={() => setShowFilters(value => !value)} style={{backgroundColor: C.green2, borderRadius: 11, paddingHorizontal: 14, paddingVertical: 13}}>
-            <Text style={{fontSize: 12, color: C.green, fontWeight: '800'}}>{showFilters ? 'Hide filters' : '⚙ Filters'}</Text>
+            <Text style={{fontSize: 12, color: C.green, fontWeight: '800'}}>{showFilters ? t('Hide filters', 'வடிகட்டிகளை மறை') : t('⚙ Filters', '⚙ வடிகட்டிகள்')}</Text>
           </TouchableOpacity>
         </View>
 
         {showFilters ? <View style={cardStyle({padding: 13, marginBottom: 12})}>
           <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8}}>
-            <Text style={{fontSize: 13, color: C.ink, fontWeight: '800'}}>Filter expenses</Text>
-            <TouchableOpacity onPress={clearFilters}><Text style={{fontSize: 11, color: C.green, fontWeight: '800'}}>Clear all</Text></TouchableOpacity>
+            <Text style={{fontSize: 13, color: C.ink, fontWeight: '800'}}>{t('Filter', 'வடிகட்டு')} {title}</Text>
+            <TouchableOpacity onPress={clearFilters}><Text style={{fontSize: 11, color: C.green, fontWeight: '800'}}>{t('Clear all', 'அனைத்தையும் அழி')}</Text></TouchableOpacity>
           </View>
           {filterFields.map(field => <View key={field.key} style={{marginBottom: 9}}>
             <Text style={{fontSize: 11, color: C.muted, fontWeight: '700', marginBottom: 4}}>{field.label}</Text>
             <View style={{backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, overflow: 'hidden'}}>
               <Picker
-                selectedValue={filters[field.key as keyof typeof filters]}
+                selectedValue={filters[field.key] || ''}
                 onValueChange={value => setFilters(previous => ({...previous, [field.key]: value}))}
                 style={{color: C.ink}}
               >
-                <Picker.Item label={`All ${field.label}`} value="" />
+                <Picker.Item label={language === 'ta' ? `அனைத்தும்: ${field.label}` : `All ${field.label}`} value="" />
                 {getOptions(field.header).map(option => <Picker.Item key={option} label={option} value={option} />)}
               </Picker>
             </View>
           </View>)}
-          <Text style={{fontSize: 11, color: C.muted, fontWeight: '700', marginBottom: 5}}>Date range (YYYY-MM-DD)</Text>
-          <View style={{flexDirection: 'row', gap: 8}}>
-            <TextInput
-              value={filters.dateFrom}
-              onChangeText={value => setFilters(previous => ({...previous, dateFrom: value}))}
-              placeholder="From date"
-              placeholderTextColor={C.muted}
-              style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, color: C.ink, fontSize: 12}}
-            />
-            <TextInput
-              value={filters.dateTo}
-              onChangeText={value => setFilters(previous => ({...previous, dateTo: value}))}
-              placeholder="To date"
-              placeholderTextColor={C.muted}
-              style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, color: C.ink, fontSize: 12}}
-            />
-          </View>
+          {dateIndex >= 0 ? <>
+            <Text style={{fontSize: 11, color: C.muted, fontWeight: '700', marginBottom: 5}}>{t('Date range (YYYY-MM-DD)', 'தேதி வரம்பு (YYYY-MM-DD)')}</Text>
+            <View style={{flexDirection: 'row', gap: 8}}>
+              <TextInput
+                value={filters.dateFrom || ''}
+                onChangeText={value => setFilters(previous => ({...previous, dateFrom: value}))}
+                placeholder={t("From date", "தொடக்க தேதி")}
+                placeholderTextColor={C.muted}
+                style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, color: C.ink, fontSize: 12}}
+              />
+              <TextInput
+                value={filters.dateTo || ''}
+                onChangeText={value => setFilters(previous => ({...previous, dateTo: value}))}
+                placeholder={t("To date", "முடிவு தேதி")}
+                placeholderTextColor={C.muted}
+                style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, color: C.ink, fontSize: 12}}
+              />
+            </View>
+          </> : null}
         </View> : null}
       </> : null}
 
-      {filteredRecords.length ? filteredRecords.map(({row, index}: any) => <RecordCard key={`${sheetId}-${index}`} sheetId={sheetId} sheet={sheet} row={row} rowIndex={index} canEdit={!readOnly} canDelete={!readOnly && sheetId === 'daily_expenses'} onEdit={onEdit} onDelete={onDelete} />) : !['project_dashboard', 'floor_summary'].includes(sheetId) ? <View style={cardStyle()}><Text style={{color: C.muted, fontSize: 13}}>{isDailyExpenses && (searchText || Object.values(filters).some(Boolean)) ? 'No expenses match your search or filters.' : 'No records entered yet.'}</Text></View> : null}
+      {filteredRecords.length ? filteredRecords.map(({row, index}: any) => <RecordCard key={`${sheetId}-${index}`} language={language} sheetId={sheetId} sheet={sheet} row={row} rowIndex={index} canEdit={!readOnly} canDelete={!readOnly && ['daily_expenses', 'materials_ground', 'materials_first', 'materials_boq', 'work_schedule', 'labour_work'].includes(sheetId)} onEdit={onEdit} onDelete={onDelete} />) : !['project_dashboard', 'floor_summary'].includes(sheetId) ? <View style={cardStyle()}><Text style={{color: C.muted, fontSize: 13}}>{searchText || Object.values(filters).some(Boolean) ? t('No records match your search or filters.', 'உங்கள் தேடல் அல்லது வடிகட்டிகளுக்குப் பொருத்தமான பதிவுகள் இல்லை.') : t('No records entered yet.', 'இதுவரை பதிவுகள் எதுவும் சேர்க்கப்படவில்லை.')}</Text></View> : null}
     </ScrollView>
   </View>;
 }
-function DashboardFormulaSummary({stats}: any) {
+function DashboardFormulaSummary({stats, language}: any) {
+  const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   const cells = [
     ['Materials', stats.materialsBudget, stats.materialsPaid],
     ['Labour & subcontractors', stats.labourBudget, stats.labourPaid],
@@ -380,18 +439,20 @@ function DashboardFormulaSummary({stats}: any) {
     ['TOTAL', stats.totalBudget, stats.totalPaid]
   ];
   return <View style={{marginTop: 12, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 10, gap: 8}}>
-    <View style={{flexDirection:'row',justifyContent:'space-between'}}><Text style={{fontSize:10,color:C.muted,fontWeight:'800',flex:1}}>COST HEAD</Text><Text style={{fontSize:10,color:C.muted,fontWeight:'800',width:88,textAlign:'right'}}>BUDGET</Text><Text style={{fontSize:10,color:C.muted,fontWeight:'800',width:88,textAlign:'right'}}>PAID</Text></View>
-    {cells.map(([label,budget,paid]: any) => <View key={label} style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center'}}><Text style={{fontSize:11,color:C.ink,fontWeight:label === 'TOTAL' ? '900' : '600',flex:1}}>{label}</Text><Text style={{fontSize:11,color:C.ink,fontWeight:'800',width:88,textAlign:'right'}}>{money(budget)}</Text><Text style={{fontSize:11,color:C.green,fontWeight:'800',width:88,textAlign:'right'}}>{money(paid)}</Text></View>)}
-    <Text style={{fontSize:10,color:C.muted}}>Daily expense ledger: {money(stats.dailyExpenses)} · Remaining budget: {money(stats.totalRemaining)}</Text>
+    <View style={{flexDirection:'row',justifyContent:'space-between'}}><Text style={{fontSize:10,color:C.muted,fontWeight:'800',flex:1}}>{t('COST HEAD', 'செலவுத் தலைப்பு')}</Text><Text style={{fontSize:10,color:C.muted,fontWeight:'800',width:88,textAlign:'right'}}>{t('BUDGET', 'பட்ஜெட்')}</Text><Text style={{fontSize:10,color:C.muted,fontWeight:'800',width:88,textAlign:'right'}}>{t('PAID', 'செலுத்தியது')}</Text></View>
+    {cells.map(([label,budget,paid]: any) => <View key={label} style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center'}}><Text style={{fontSize:11,color:C.ink,fontWeight:label === 'TOTAL' ? '900' : '600',flex:1}}>{language === 'ta' ? ({Materials:'பொருட்கள்', 'Labour & subcontractors':'தொழிலாளர் மற்றும் ஒப்பந்ததாரர்கள்', 'Professional fees':'நிபுணர் கட்டணம்', 'Equipment & misc.':'உபகரணங்கள் மற்றும் இதர செலவுகள்', Contingency:'எதிர்பாராத செலவு', TOTAL:'மொத்தம்'} as Record<string, string>)[label] || label : label}</Text><Text style={{fontSize:11,color:C.ink,fontWeight:'800',width:88,textAlign:'right'}}>{money(budget)}</Text><Text style={{fontSize:11,color:C.green,fontWeight:'800',width:88,textAlign:'right'}}>{money(paid)}</Text></View>)}
+    <Text style={{fontSize:10,color:C.muted}}>{t('Daily expense ledger', 'தினசரி செலவுப் பதிவு')}: {money(stats.dailyExpenses)} · {t('Remaining budget', 'மீதமுள்ள பட்ஜெட்')}: {money(stats.totalRemaining)}</Text>
   </View>;
 }
 
-function FloorSummaryBlock({sheets}: any) {
+function FloorSummaryBlock({sheets, language}: any) {
+  const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   const values = calculateFloorSummary(sheets);
-  return <View style={{marginTop: 12, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 10, gap: 8}}>{values.map(item => <View key={item.floor} style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}><View style={{flex: 1}}><Text style={{fontSize: 12, color: C.ink, fontWeight: '800'}}>{item.floor}</Text><Text style={{fontSize: 10, color: C.muted, marginTop: 2}}>Materials {money(item.materials)} · Labour {money(item.labour)}</Text></View><Text style={{fontSize: 12, color: C.ink, fontWeight: '900'}}>{money(item.total)}</Text></View>)}</View>;
+  return <View style={{marginTop: 12, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 10, gap: 8}}>{values.map(item => <View key={item.floor} style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}><View style={{flex: 1}}><Text style={{fontSize: 12, color: C.ink, fontWeight: '800'}}>{item.floor}</Text><Text style={{fontSize: 10, color: C.muted, marginTop: 2}}>{t('Materials', 'பொருட்கள்')} {money(item.materials)} · {t('Labour', 'தொழிலாளர்')} {money(item.labour)}</Text></View><Text style={{fontSize: 12, color: C.ink, fontWeight: '900'}}>{money(item.total)}</Text></View>)}</View>;
 }
 
-function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: any) {
+function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave, language}: any) {
+  const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   const headers = headersForSheet(sheetId, sheet || {values: [[]]});
   const [values, setValues] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -422,7 +483,7 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
       await onSave(next);
       onClose();
     } catch (e: any) {
-      Alert.alert('Could not save', e?.message || 'Please try again.');
+      Alert.alert(t('Could not save', 'சேமிக்க முடியவில்லை'), e?.message || t('Please try again.', 'மீண்டும் முயற்சிக்கவும்.'));
     } finally { setSaving(false); }
   };
 
@@ -433,7 +494,7 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={{backgroundColor: C.paper, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%', padding: 18}}>
           <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12}}>
-            <View><Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>{isNew ? 'New record' : 'Edit record'}</Text><Text style={{fontSize: 11, color: C.muted, marginTop: 3}}>{SHEET_TITLES[sheetId] || sheet.name}</Text></View>
+            <View><Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>{isNew ? t('New record', 'புதிய பதிவு') : t('Edit record', 'பதிவைத் திருத்து')}</Text><Text style={{fontSize: 11, color: C.muted, marginTop: 3}}>{SHEET_TITLES[sheetId] || sheet.name}</Text></View>
             <TouchableOpacity onPress={onClose} style={{padding: 8}}><Text style={{fontSize: 22, color: C.muted}}>×</Text></TouchableOpacity>
           </View>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingBottom: 12}}>
@@ -444,11 +505,38 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
               return <View key={`${h}-${i}`} style={{marginBottom: 11}}>
                 <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5}}>
                   <Text style={{fontSize: 11, fontWeight: '800', color: C.muted}}>{h.toUpperCase()}</Text>
-                  {formula ? <Text style={{fontSize: 10, color: C.gold, fontWeight: '800'}}>FORMULA · LOCKED</Text> : null}
+                  {formula ? <Text style={{fontSize: 10, color: C.gold, fontWeight: '800'}}>{t('FORMULA · LOCKED', 'சூத்திரம் · பூட்டப்பட்டது')}</Text> : null}
                 </View>
                 {(() => {
                   const optionsByHeader: Record<string, string[]> = {
                     'Floor / Area': ['Ground Floor', 'First Floor', 'Common/External'],
+                    'Construction Activity': [
+                      'Site setup & setting out',
+                      'Excavation',
+                      'PCC / footing preparation',
+                      'Footing reinforcement & concrete',
+                      'Foundation / column up to plinth',
+                      'Plinth beam & filling',
+                      'Ground floor columns & beams',
+                      'Ground floor slab / roof over GF',
+                      'First floor masonry',
+                      'First floor columns / beams (if applicable)',
+                      'First floor roof slab',
+                      'Brickwork / partitions',
+                      'Plumbing rough-in',
+                      'Electrical conduit rough-in',
+                      'Door/window frames',
+                      'Internal & external plaster',
+                      'Waterproofing',
+                      'Floor & wall tiling',
+                      'Plumbing fixtures',
+                      'Electrical wiring & fittings',
+                      'Doors, windows & grills',
+                      'Putty & painting',
+                      'Septic / drainage / rainwater works',
+                      'Compound wall / gate / external paving',
+                      'Testing, snag list & handover'
+                    ],
                     'Work Stage': ['Site Prep', 'Foundation', 'Plinth', 'Structure', 'Brickwork', 'Roof Slab', 'Plastering', 'Plumbing', 'Electrical', 'Flooring', 'Painting', 'Finishing', 'External Works'],
                     'Expense Category': ['Material', 'Engineer/Architect', 'Labour', 'Equipment', 'Transport', 'Other'],
                     'Payment Mode': ['UPI', 'Bank Transfer', 'Cash', 'Cheque'],
@@ -478,9 +566,27 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
                           })}
                           enabled={!formula}
                         >
-                          <Picker.Item label={`Select ${h}`} value="" />
+                          <Picker.Item label={language === 'ta' ? `${h} தேர்ந்தெடுக்கவும்` : `Select ${h}`} value="" />
                           {options.map(option => (
-                            <Picker.Item key={option} label={option} value={option} />
+                            <Picker.Item key={option} label={language === 'ta' ? ({
+                              'Ground Floor': 'தரைத் தளம்',
+                              'First Floor': 'முதல் தளம்',
+                              'Common/External': 'பொதுவான / வெளிப்புறம்',
+                              'Foundation': 'அஸ்திவாரம்',
+                              'Brickwork': 'செங்கல் வேலை',
+                              'Plumbing': 'குழாய் வேலை',
+                              'Electrical': 'மின்சார வேலை',
+                              'Painting': 'வண்ணம் பூசுதல்',
+                              'Not Started': 'தொடங்கவில்லை',
+                              'In Progress': 'நடைபெறுகிறது',
+                              'Completed': 'முடிந்தது',
+                              'Yes': 'ஆம்',
+                              'No': 'இல்லை',
+                              'Material': 'பொருள்',
+                              'Labour': 'தொழிலாளர்',
+                              'Transport': 'போக்குவரத்து',
+                              'Other': 'மற்றவை'
+                            } as Record<string, string>)[option] || option : option} value={option} />
                           ))}
                         </Picker>
                       </View>
@@ -494,7 +600,7 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
                       editable={!formula}
                       keyboardType={isMoneyHeader(h) || /qty|complete|duration|delay|area|%/i.test(h) ? 'numeric' : 'default'}
                       multiline={/notes|scope|specification/i.test(h)}
-                      placeholder={isDateHeader(h) ? 'YYYY-MM-DD' : `Enter ${h.toLowerCase()}`}
+                      placeholder={isDateHeader(h) ? 'YYYY-MM-DD' : language === 'ta' ? `${h} உள்ளிடவும்` : `Enter ${h.toLowerCase()}`}
                       placeholderTextColor="#9AA8A2"
                       style={{backgroundColor: formula ? '#E8EDE9' : C.white, borderWidth: 1, borderColor: C.line, borderRadius: 11, padding: 12, color: formula ? C.muted : C.ink, minHeight: /notes|scope|specification/i.test(h) ? 68 : 45, textAlignVertical: 'top'}}
                     />
@@ -504,8 +610,8 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
             })}
           </ScrollView>
           <View style={{flexDirection: 'row', gap: 9, paddingTop: 10}}>
-            <TouchableOpacity onPress={onClose} style={{...buttonStyle(false, true), flex: 1}}><Text style={{fontWeight: '800', color: C.green}}>Cancel</Text></TouchableOpacity>
-            <TouchableOpacity disabled={saving} onPress={save} style={{...buttonStyle(saving), flex: 1}}>{saving ? <ActivityIndicator color="#FFF"/> : <Text style={{fontWeight: '800', color: '#FFF'}}>Save changes</Text>}</TouchableOpacity>
+            <TouchableOpacity onPress={onClose} style={{...buttonStyle(false, true), flex: 1}}><Text style={{fontWeight: '800', color: C.green}}>{t('Cancel', 'ரத்து செய்')}</Text></TouchableOpacity>
+            <TouchableOpacity disabled={saving} onPress={save} style={{...buttonStyle(saving), flex: 1}}>{saving ? <ActivityIndicator color="#FFF"/> : <Text style={{fontWeight: '800', color: '#FFF'}}>{t('Save changes', 'மாற்றங்களைச் சேமி')}</Text>}</TouchableOpacity>
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -561,34 +667,103 @@ function appendedSheet(sheetId: string, sheet: SheetDocument): {next: SheetDocum
   return {next, rowIndex: next.values.length - 1};
 }
 
-function ActivityScreen({activities}: {activities: ActivityItem[]}) {
-  return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 30}}>
-    <View style={cardStyle({marginBottom: 12})}><Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>Project notifications</Text><Text style={{fontSize: 12, lineHeight: 18, color: C.muted, marginTop: 5}}>Changes made by the owner appear here and can also arrive as Android push notifications when the device is registered.</Text></View>
-    {activities.length ? activities.map(a => <View key={a.id} style={cardStyle({marginBottom: 9})}><Pill>{a.sheetName || 'Project update'}</Pill><Text style={{fontSize: 14, fontWeight: '800', color: C.ink, marginTop: 9}}>{a.title || 'KSK House updated'}</Text><Text style={{fontSize: 12, color: C.muted, marginTop: 4}}>{a.body || 'New construction data is available.'}</Text></View>) : <View style={cardStyle()}><Text style={{fontSize: 12, color: C.muted}}>No cloud updates yet.</Text></View>}
-  </ScrollView>;
+
+function ActivityScreen({activities, language}: any) {
+  const t = (en: string, ta: string) => language === 'ta' ? ta : en;
+
+  const translatedChange = (value: string) => {
+    if (language !== 'ta') return value;
+    const labels: Record<string, string> = {
+      CREATE: 'உருவாக்கம்',
+      UPDATE: 'புதுப்பிப்பு',
+      DELETE: 'நீக்கம்',
+      ADD: 'சேர்த்தல்',
+      EDIT: 'திருத்தம்',
+      IMPORT: 'இறக்குமதி'
+    };
+    return labels[value] || value;
+  };
+
+  return (
+    <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 30}}>
+      <View style={cardStyle({marginBottom: 12})}>
+        <Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>
+          {t('Project notifications', 'திட்ட அறிவிப்புகள்')}
+        </Text>
+        <Text style={{fontSize: 12, lineHeight: 18, color: C.muted, marginTop: 5}}>
+          {t(
+            'Construction changes made by the owner appear here.',
+            'உரிமையாளர் செய்யும் கட்டுமான மாற்றங்கள் இங்கே தோன்றும்.'
+          )}
+        </Text>
+      </View>
+
+      {activities.length ? activities.map((a: ActivityItem) => (
+        <View key={a.id} style={cardStyle({marginBottom: 9})}>
+          <Pill>{a.sheetName || t('Project update', 'திட்டப் புதுப்பிப்பு')}</Pill>
+
+          <Text style={{fontSize: 14, fontWeight: '900', color: C.ink, marginTop: 9}}>
+            {a.changeType
+              ? translatedChange(a.changeType.toUpperCase())
+              : t('UPDATE', 'புதுப்பிப்பு')}: {a.itemName || a.title || t('KSK House updated', 'KSK வீடு புதுப்பிக்கப்பட்டது')}
+          </Text>
+
+          <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>
+            {t('Changed by:', 'மாற்றியவர்:')} {a.actorName || t('Project owner', 'திட்ட உரிமையாளர்')}
+          </Text>
+
+          <Text style={{fontSize: 12, lineHeight: 19, color: C.ink, marginTop: 8}}>
+            {a.details || a.body || t('New construction data is available.', 'புதிய கட்டுமானத் தகவல்கள் உள்ளன.')}
+          </Text>
+        </View>
+      )) : (
+        <View style={cardStyle()}>
+          <Text style={{fontSize: 12, color: C.muted}}>
+            {t('No cloud updates yet.', 'இதுவரை கிளவுட் புதுப்பிப்புகள் இல்லை.')}
+          </Text>
+        </View>
+      )}
+    </ScrollView>
+  );
 }
 
-function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed, onNotifications, onSignOut, onOriginal}: any) {
+
+function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed, onNotifications, onSignOut, onOriginal, language, onLanguageChange}: any) {
+  const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 35}}>
     <View style={cardStyle({marginBottom: 12})}>
-      <Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>Account & access</Text>
-      <Text style={{fontSize: 12, color: C.muted, marginTop: 9}}>{user?.email || 'Local workbook preview'}</Text>
-      <View style={{flexDirection: 'row', gap: 8, marginTop: 12}}><Pill color={role === 'owner' ? C.green2 : C.blueBg} textColor={role === 'owner' ? C.green : '#365775'}>{role === 'owner' ? 'OWNER · EDITOR' : role === 'viewer' ? 'FATHER · READ ONLY' : 'PREVIEW'}</Pill><Pill color={C.green2}>{cloudReady ? 'Cloud connected' : 'Cloud not connected'}</Pill></View>
-      <Text style={{fontSize: 11, lineHeight: 18, color: C.muted, marginTop: 13}}>The owner account can update every worksheet. A viewer account can read and receive notifications but cannot write to the project. Access is enforced by Firestore security rules, not just by hiding edit buttons.</Text>
+      <Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>{t('Account & access', 'கணக்கு மற்றும் அணுகல்')}</Text>
+      <Text style={{fontSize: 12, color: C.muted, marginTop: 9}}>{user?.email || t('Local workbook preview', 'உள்ளூர் பணிப்புத்தக முன்னோட்டம்')}</Text>
+      <View style={{flexDirection: 'row', gap: 8, marginTop: 12}}><Pill color={role === 'owner' ? C.green2 : C.blueBg} textColor={role === 'owner' ? C.green : '#365775'}>{role === 'owner' ? t('OWNER · EDITOR', 'உரிமையாளர் · திருத்துபவர்') : role === 'viewer' ? t('FATHER · READ ONLY', 'பார்வையாளர் · படிக்க மட்டும்') : t('PREVIEW', 'முன்னோட்டம்')}</Pill><Pill color={C.green2}>{cloudReady ? t('Cloud connected', 'கிளவுட் இணைக்கப்பட்டுள்ளது') : t('Cloud not connected', 'கிளவுட் இணைக்கப்படவில்லை')}</Pill></View>
+      <Text style={{fontSize: 11, lineHeight: 18, color: C.muted, marginTop: 13}}>{t('The owner account can update every worksheet. A viewer account can read and receive notifications but cannot write to the project. Access is enforced by Firestore security rules, not just by hiding edit buttons.', 'உரிமையாளர் கணக்கு அனைத்து பணித்தாள்களையும் புதுப்பிக்கலாம். பார்வையாளர் கணக்கு தகவல்களைப் படிக்கவும் அறிவிப்புகளைப் பெறவும் முடியும்; ஆனால் திட்டத்தில் மாற்றங்களைச் செய்ய முடியாது. அணுகல் Firestore பாதுகாப்பு விதிகளால் கட்டுப்படுத்தப்படுகிறது.')}</Text>
     </View>
     <View style={cardStyle({marginBottom: 12})}>
-      <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>Cloud workbook</Text>
-      <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>{syncCount} workbook sheets currently stored in the cloud.</Text>
-      {role === 'owner' && cloudReady && syncCount === 0 ? <TouchableOpacity disabled={initialising} onPress={onSeed} style={{...buttonStyle(initialising), marginTop: 14}}>{initialising ? <ActivityIndicator color="#FFF"/> : <Text style={{color: '#FFF', fontWeight: '800'}}>Import workbook to cloud</Text>}</TouchableOpacity> : null}
-      {role === 'viewer' && syncCount === 0 ? <Text style={{fontSize: 12, color: C.gold, marginTop: 12}}>Waiting for the owner to import the workbook into the cloud.</Text> : null}
-      <TouchableOpacity onPress={onOriginal} style={{...buttonStyle(false, true), marginTop: 10}}><Text style={{color: C.green, fontWeight: '800'}}>Original Excel workbook included in project</Text></TouchableOpacity>
+      <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>Language / மொழி</Text>
+      <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>{t('Choose your preferred app language.', 'உங்களுக்கு விருப்பமான செயலி மொழியைத் தேர்ந்தெடுக்கவும்.')}</Text>
+      <View style={{borderWidth: 1, borderColor: C.line, borderRadius: 10, marginTop: 10, overflow: 'hidden'}}>
+        <Picker
+          selectedValue={language}
+          onValueChange={(value: 'en' | 'ta') => onLanguageChange(value)}
+          style={{color: C.ink}}
+        >
+          <Picker.Item label="English" value="en" />
+          <Picker.Item label="தமிழ்" value="ta" />
+        </Picker>
+      </View>
     </View>
     <View style={cardStyle({marginBottom: 12})}>
-      <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>Notifications</Text>
-      <Text style={{fontSize: 12, color: C.muted, lineHeight: 18, marginTop: 5}}>Register this phone to receive an Android notification when the owner changes a worksheet.</Text>
-      <TouchableOpacity onPress={onNotifications} style={{...buttonStyle(false, true), marginTop: 13}}><Text style={{color: C.green, fontWeight: '800'}}>Enable this device</Text></TouchableOpacity>
+      <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>{t('Cloud workbook', 'கிளவுட் பணிப்புத்தகம்')}</Text>
+      <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>{syncCount} {t('workbook sheets currently stored in the cloud.', 'பணித்தாள்கள் தற்போது கிளவுடில் சேமிக்கப்பட்டுள்ளன.')}</Text>
+      {role === 'owner' && cloudReady && syncCount === 0 ? <TouchableOpacity disabled={initialising} onPress={onSeed} style={{...buttonStyle(initialising), marginTop: 14}}>{initialising ? <ActivityIndicator color="#FFF"/> : <Text style={{color: '#FFF', fontWeight: '800'}}>{t('Import workbook to cloud', 'பணிப்புத்தகத்தை கிளவுடில் பதிவேற்றவும்')}</Text>}</TouchableOpacity> : null}
+      {role === 'viewer' && syncCount === 0 ? <Text style={{fontSize: 12, color: C.gold, marginTop: 12}}>{t('Waiting for the owner to import the workbook into the cloud.', 'உரிமையாளர் பணிப்புத்தகத்தை கிளவுடில் பதிவேற்றுவதற்காகக் காத்திருக்கிறது.')}</Text> : null}
+      <TouchableOpacity onPress={onOriginal} style={{...buttonStyle(false, true), marginTop: 10}}><Text style={{color: C.green, fontWeight: '800'}}>{t('Original Excel workbook included in project', 'அசல் Excel பணிப்புத்தகம் திட்டத்தில் சேர்க்கப்பட்டுள்ளது')}</Text></TouchableOpacity>
     </View>
-    <TouchableOpacity onPress={onSignOut} style={{...buttonStyle(false, true), marginTop: 3}}><Text style={{color: C.red, fontWeight: '800'}}>Sign out</Text></TouchableOpacity>
+    <View style={cardStyle({marginBottom: 12})}>
+      <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>{t('Notifications', 'அறிவிப்புகள்')}</Text>
+      <Text style={{fontSize: 12, color: C.muted, lineHeight: 18, marginTop: 5}}>{t('Register this phone to receive an Android notification when the owner changes a worksheet.', 'உரிமையாளர் பணித்தாளை மாற்றும்போது Android அறிவிப்பைப் பெற இந்தத் தொலைபேசியைப் பதிவு செய்யவும்.')}</Text>
+      <TouchableOpacity onPress={onNotifications} style={{...buttonStyle(false, true), marginTop: 13}}><Text style={{color: C.green, fontWeight: '800'}}>{t('Enable this device', 'இந்தச் சாதனத்தைச் செயல்படுத்தவும்')}</Text></TouchableOpacity>
+    </View>
+    <TouchableOpacity onPress={onSignOut} style={{...buttonStyle(false, true), marginTop: 3}}><Text style={{color: C.red, fontWeight: '800'}}>{t('Sign out', 'வெளியேறு')}</Text></TouchableOpacity>
   </ScrollView>;
 }
 
@@ -608,6 +783,32 @@ export default function App() {
   const [modalVisible, setModalVisible] = useState(false);
   const [initialising, setInitialising] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
+  const [language, setLanguage] = useState<'en' | 'ta'>('en');
+  const [languageLoaded, setLanguageLoaded] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem('ksk_app_language')
+      .then(saved => {
+        if (active && (saved === 'en' || saved === 'ta')) {
+          setLanguage(saved);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLanguageLoaded(true);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const changeLanguage = async (next: 'en' | 'ta') => {
+    setLanguage(next);
+    try {
+      await AsyncStorage.setItem('ksk_app_language', next);
+    } catch {
+      Alert.alert('Language', 'Could not save language preference.');
+    }
+  };
 
   useEffect(() => {
     if (!auth) { setRoleChecked(true); return; }
@@ -690,24 +891,34 @@ export default function App() {
     setSyncState('LIVE SYNC');
   };
 
-  const deleteExpense = (rowIndex: number) => {
+  const deleteRecord = (sheetId: string, rowIndex: number) => {
     if (role !== 'owner' || !user || !db || demoMode) {
-      Alert.alert('Cannot delete', 'Only the connected project owner can delete expenses.');
+      Alert.alert('Cannot delete', 'Only the connected project owner can delete records.');
       return;
     }
 
+    const current = sheets[sheetId];
+    const headers = headersForSheet(sheetId, current);
+
+    const primaryIndex = titleIndex(headers, [
+      'material / item', 'item / description', 'construction activity',
+      'labour / contractor work', 'service / fee head'
+    ]);
+    const itemName = primaryIndex >= 0
+      ? String(current?.values?.[rowIndex]?.[primaryIndex] || 'this record')
+      : 'this record';
+
     Alert.alert(
-      'Delete expense?',
-      'This expense will be permanently deleted. Dashboard and Floor Summary totals will be updated.',
+      'Delete record?',
+      `Permanently delete "${itemName}" from ${SHEET_TITLES[sheetId] || sheetId}?`,
       [
         {text: 'Cancel', style: 'cancel'},
         {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            const current = sheets.daily_expenses;
             if (!current || rowIndex <= 0 || rowIndex >= (current.values || []).length) {
-              Alert.alert('Delete failed', 'The selected expense could not be found.');
+              Alert.alert('Delete failed', 'The selected record could not be found.');
               return;
             }
 
@@ -716,15 +927,16 @@ export default function App() {
               values: [...(current.values || [])],
               formulas: [...(current.formulas || [])]
             };
+
             next.values.splice(rowIndex, 1);
             next.formulas.splice(rowIndex, 1);
 
             try {
               setSyncState('SAVING');
-              await saveSheet('daily_expenses', next, user.uid);
-              setSheets(previous => ({...previous, daily_expenses: next}));
+              await saveSheet(sheetId, next, user.uid);
+              setSheets(previous => ({...previous, [sheetId]: next}));
               setSyncState('LIVE SYNC');
-              Alert.alert('Deleted', 'The expense has been deleted successfully.');
+              Alert.alert('Deleted', 'The record has been deleted successfully.');
             } catch (e: any) {
               setSyncState('SYNC ERROR');
               Alert.alert('Delete failed', e?.message || 'Please try again.');
@@ -754,8 +966,8 @@ export default function App() {
 
   if (isFirebaseConfigured && !demoMode && (!user || !roleChecked || !role)) {
     if (!user) return <LoginScreen onLogin={signIn} demo={() => {setDemoMode(true); setSheets(LOCAL_WORKBOOK);}} />;
-    if (!roleChecked) return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', alignItems:'center'}}><ActivityIndicator color={C.green}/><Text style={{color:C.muted, marginTop:12}}>Checking project access…</Text></SafeAreaView>;
-    return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', padding:24}}><View style={cardStyle()}><Text style={{fontSize:20, fontWeight:'900', color:C.ink}}>Access not assigned</Text><Text style={{fontSize:13, lineHeight:20, color:C.muted, marginTop:9}}>This Firebase account does not have an owner or viewer role in the KSK project. Ask the project administrator to assign the role in Firestore, then sign in again.</Text><TouchableOpacity onPress={performSignOut} style={{...buttonStyle(), marginTop:16}}><Text style={{color:'#FFF', fontWeight:'800'}}>Sign out</Text></TouchableOpacity></View></SafeAreaView>;
+    if (!roleChecked) return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', alignItems:'center'}}><ActivityIndicator color={C.green}/><Text style={{color:C.muted, marginTop:12}}>{language === 'ta' ? 'திட்ட அணுகலைச் சரிபார்க்கிறது…' : 'Checking project access…'}</Text></SafeAreaView>;
+    return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', padding:24}}><View style={cardStyle()}><Text style={{fontSize:20, fontWeight:'900', color:C.ink}}>{language === 'ta' ? 'அணுகல் ஒதுக்கப்படவில்லை' : 'Access not assigned'}</Text><Text style={{fontSize:13, lineHeight:20, color:C.muted, marginTop:9}}>{language === 'ta' ? 'இந்த Firebase கணக்கிற்கு KSK திட்டத்தில் உரிமையாளர் அல்லது பார்வையாளர் அனுமதி இல்லை. Firestore-இல் அனுமதியை ஒதுக்க திட்ட நிர்வாகியிடம் கேட்டு மீண்டும் உள்நுழையவும்.' : 'This Firebase account does not have an owner or viewer role in the KSK project. Ask the project administrator to assign the role in Firestore, then sign in again.'}</Text><TouchableOpacity onPress={performSignOut} style={{...buttonStyle(), marginTop:16}}><Text style={{color:'#FFF', fontWeight:'800'}}>{language === 'ta' ? 'வெளியேறு' : 'Sign out'}</Text></TouchableOpacity></View></SafeAreaView>;
   }
 
   const syncLabel = demoMode || !user ? 'LOCAL PREVIEW' : syncState;
@@ -763,19 +975,31 @@ export default function App() {
   const selectedData = selectedSheet ? (sheets[selectedSheet] || (selectedSheet === 'quotation_compare' ? undefined : undefined)) : undefined;
   const recordsCount = selectedData ? meaningfulRows(selectedData).length : 0;
 
+  const headerSubtitle = screen === 'Dashboard'
+    ? (language === 'ta' ? 'திட்ட மேலோட்டம்' : 'Project overview')
+    : screen === 'Sheets'
+      ? (selectedSheet
+          ? (language === 'ta'
+              ? ({project_setup: 'திட்ட அமைப்பு', floor_summary: 'தளச் சுருக்கம்'} as Record<string, string>)[selectedSheet] || SHEET_TITLES[selectedSheet]
+              : SHEET_TITLES[selectedSheet])
+          : (language === 'ta' ? 'திட்டப் பணித்தாள்கள்' : 'Project worksheets'))
+      : language === 'ta'
+        ? ({Expenses: 'தினசரி செலவுகள்', Progress: 'வேலை முன்னேற்றம்', Activity: 'செயல்பாட்டு பதிவு', Settings: 'அமைப்புகள்'} as Record<string, string>)[screen] || screen
+        : screen;
+
   const renderScreen = () => {
-    if (screen === 'Dashboard') return <Dashboard sheets={sheets} activities={activities} role={canEdit ? 'owner' : role} syncLabel={syncLabel} onOpen={openSheet} onAddExpense={addExpense} />;
+    if (screen === 'Dashboard') return <Dashboard sheets={sheets} activities={activities} role={canEdit ? 'owner' : role} syncLabel={syncLabel} onOpen={openSheet} onAddExpense={addExpense} language={language} />;
     if (screen === 'Sheets') {
-      if (!selectedSheet) return <SheetMenu onOpen={openSheet} />;
+      if (!selectedSheet) return <SheetMenu onOpen={openSheet} language={language} />;
       if (selectedSheet === 'quotation_compare' && !sheets.quotation_compare) {
-        return <View style={{padding:20}}><Text style={{fontSize:16, fontWeight:'800', color:C.ink}}>Quotation Compare</Text><Text style={{color:C.muted, marginTop:6}}>This extra module will be created when the workbook is imported to Firebase.</Text>{canEdit ? <TouchableOpacity onPress={async()=>{if(user){await ensureQuoteSheet(user.uid); Alert.alert('Ready','Quotation Compare is now available.')}}} style={{...buttonStyle(), marginTop:14}}><Text style={{color:'#FFF',fontWeight:'800'}}>Create comparison sheet</Text></TouchableOpacity> : null}</View>;
+        return <View style={{padding:20}}><Text style={{fontSize:16, fontWeight:'800', color:C.ink}}>{language === 'ta' ? 'விலைப்புள்ளி ஒப்பீடு' : 'Quotation Compare'}</Text><Text style={{color:C.muted, marginTop:6}}>{language === 'ta' ? 'பணிப்புத்தகம் Firebase-இல் பதிவேற்றப்பட்டதும் இந்தக் கூடுதல் பகுதி உருவாக்கப்படும்.' : 'This extra module will be created when the workbook is imported to Firebase.'}</Text>{canEdit ? <TouchableOpacity onPress={async()=>{if(user){await ensureQuoteSheet(user.uid); Alert.alert(language === 'ta' ? 'தயார்' : 'Ready', language === 'ta' ? 'விலைப்புள்ளி ஒப்பீடு இப்போது கிடைக்கிறது.' : 'Quotation Compare is now available.')}}} style={{...buttonStyle(), marginTop:14}}><Text style={{color:'#FFF',fontWeight:'800'}}>{language === 'ta' ? 'ஒப்பீட்டுப் பணித்தாளை உருவாக்கு' : 'Create comparison sheet'}</Text></TouchableOpacity> : null}</View>;
       }
-      return <SheetView sheetId={selectedSheet} sheet={selectedData} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => {setSelectedSheet(''); setScreen('Dashboard');}} onEdit={(index: number) => startEdit(selectedSheet, index)} onAdd={() => startAdd(selectedSheet)} />;
+      return <SheetView sheetId={selectedSheet} sheet={selectedData} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => {setSelectedSheet(''); setScreen('Dashboard');}} onEdit={(index: number) => startEdit(selectedSheet, index)} onAdd={() => startAdd(selectedSheet)} onDelete={(index: number) => deleteRecord(selectedSheet, index)} />;
     }
-    if (screen === 'Expenses') return <View style={{flex:1}}><SheetView sheetId="daily_expenses" sheet={sheets.daily_expenses} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('daily_expenses', index)} onAdd={() => startAdd('daily_expenses')} onDelete={deleteExpense} /></View>;
-    if (screen === 'Progress') return <View style={{flex:1}}><SheetView sheetId="work_schedule" sheet={sheets.work_schedule} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('work_schedule', index)} onAdd={() => startAdd('work_schedule')} /></View>;
-    if (screen === 'Activity') return <ActivityScreen activities={activities}/>;
-    return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} />;
+    if (screen === 'Expenses') return <View style={{flex:1}}><SheetView sheetId="daily_expenses" sheet={sheets.daily_expenses} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('daily_expenses', index)} onAdd={() => startAdd('daily_expenses')} onDelete={(index: number) => deleteRecord('daily_expenses', index)} /></View>;
+    if (screen === 'Progress') return <View style={{flex:1}}><SheetView sheetId="work_schedule" sheet={sheets.work_schedule} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('work_schedule', index)} onAdd={() => startAdd('work_schedule')} onDelete={(index: number) => deleteRecord('work_schedule', index)} /></View>;
+    if (screen === 'Activity') return <ActivityScreen activities={activities} language={language}/>;
+    return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} language={language} onLanguageChange={changeLanguage} />;
   };
 
   return <SafeAreaView style={{flex: 1, backgroundColor: C.paper}}>
@@ -783,11 +1007,11 @@ export default function App() {
     <View style={{height: 58, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.paper}}>
       <View style={{flexDirection:'row', alignItems:'center', gap:10}}>
         <View style={{width:36,height:36,borderRadius:12,backgroundColor:C.dark,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#FFF',fontWeight:'900',fontSize:12}}>KSK</Text></View>
-        <View><Text style={{fontSize:15,fontWeight:'900',color:C.ink}}>KSK House</Text><Text style={{fontSize:10,color:C.muted}}>{screen === 'Dashboard' ? 'Project overview' : screen === 'Sheets' ? (selectedSheet ? SHEET_TITLES[selectedSheet] : 'Project worksheets') : screen}</Text></View>
+        <View><Text style={{fontSize:15,fontWeight:'900',color:C.ink}}>KSK House</Text><Text style={{fontSize:10,color:C.muted}}>{headerSubtitle}</Text></View>
       </View>
       <View style={{flexDirection:'row',alignItems:'center',gap:10}}>
         <View style={{width:7,height:7,borderRadius:6,backgroundColor:syncLabel === 'LIVE SYNC' ? '#2B9A69' : C.gold}}/>
-        <Text style={{fontSize:10,fontWeight:'800',color:C.muted}}>{syncLabel === 'LIVE SYNC' ? 'LIVE' : syncLabel === 'SAVING' ? 'SAVING' : 'PREVIEW'}</Text>
+        <Text style={{fontSize:10,fontWeight:'800',color:C.muted}}>{language === 'ta' ? (syncLabel === 'LIVE SYNC' ? 'நேரலை' : syncLabel === 'SAVING' ? 'சேமிப்பு' : 'முன்னோட்டம்') : (syncLabel === 'LIVE SYNC' ? 'LIVE' : syncLabel === 'SAVING' ? 'SAVING' : 'PREVIEW')}</Text>
       </View>
     </View>
     <View style={{flex:1}}>{renderScreen()}</View>
@@ -799,9 +1023,9 @@ export default function App() {
         ['Sheets','▦','Floor Summary','floor_summary']
       ].map(([id,icon,label,sheetId]) => <TouchableOpacity key={label} onPress={() => {setScreen(id as any); setSelectedSheet(sheetId);}} style={{alignItems:'center',justifyContent:'center',width:82,height:52}}>
         <Text style={{fontSize:18,color:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? C.green : '#82918B',fontWeight:'800'}}>{icon}</Text>
-        <Text style={{fontSize:10,marginTop:3,color:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? C.green : C.muted,fontWeight:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? '900' : '600'}}>{label}</Text>
+        <Text style={{fontSize:10,marginTop:3,color:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? C.green : C.muted,fontWeight:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? '900' : '600'}}>{language === 'ta' ? ({Dashboard: 'முகப்பு', 'Project Setup': 'திட்ட அமைப்பு', 'Daily Expenses': 'தினசரி செலவுகள்', 'Floor Summary': 'தளச் சுருக்கம்'} as Record<string, string>)[label] || label : label}</Text>
       </TouchableOpacity>)}
     </View>
-    <RowEditor visible={modalVisible} sheetId={editingSheetId} sheet={sheets[editingSheetId]} rowIndex={editingRow} isNew={editingIsNew} onClose={() => setModalVisible(false)} onSave={saveEditedSheet}/>
+    <RowEditor visible={modalVisible} sheetId={editingSheetId} sheet={sheets[editingSheetId]} rowIndex={editingRow} isNew={editingIsNew} language={language} onClose={() => setModalVisible(false)} onSave={saveEditedSheet}/>
   </SafeAreaView>;
 }

@@ -16,7 +16,12 @@ export type ActivityItem = {
   title?: string;
   body?: string;
   actorName?: string;
+  actorUid?: string;
+  sheetId?: string;
   sheetName?: string;
+  changeType?: 'added' | 'edited' | 'deleted';
+  itemName?: string;
+  details?: string;
   createdAt?: any;
 };
 
