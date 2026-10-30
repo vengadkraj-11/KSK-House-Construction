@@ -196,7 +196,7 @@ function titleIndex(headers: string[], candidates: string[]) {
   return headers.findIndex(h => candidates.some(c => h.toLowerCase().includes(c)));
 }
 
-function RecordCard({sheetId, sheet, row, rowIndex, canEdit, onEdit}: any) {
+function RecordCard({sheetId, sheet, row, rowIndex, canEdit, canDelete, onEdit, onDelete}: any) {
   const headers = headersForSheet(sheetId, sheet);
   const primaryIndex = titleIndex(headers, ['material / item', 'item / description', 'construction activity', 'service / fee head', 'expense / equipment', 'labour / contractor work', 'cost head', 'setting']);
   const primary = primaryIndex >= 0 ? displayCell(sheetId, sheet, rowIndex, primaryIndex) : row.find((v: any) => !isBlank(v));
@@ -212,7 +212,10 @@ function RecordCard({sheetId, sheet, row, rowIndex, canEdit, onEdit}: any) {
         <Text style={{fontSize: 14, color: C.ink, fontWeight: '800'}}>{String(primary || 'Untitled record')}</Text>
         {info.slice(0, 2).map((item, i) => <Text key={i} style={{fontSize: 11, color: C.muted, marginTop: 4}}>{item}</Text>)}
       </View>
-      {canEdit ? <TouchableOpacity onPress={() => onEdit(rowIndex)} style={{paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: C.green2}}><Text style={{fontSize: 11, color: C.green, fontWeight: '800'}}>Edit</Text></TouchableOpacity> : <Pill color={C.blueBg} textColor="#365775">VIEW</Pill>}
+      {canEdit ? <View style={{flexDirection: 'row', gap: 6}}>
+        <TouchableOpacity onPress={() => onEdit(rowIndex)} style={{paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: C.green2}}><Text style={{fontSize: 11, color: C.green, fontWeight: '800'}}>Edit</Text></TouchableOpacity>
+        {canDelete ? <TouchableOpacity onPress={() => onDelete(rowIndex)} style={{paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: '#FDECEC'}}><Text style={{fontSize: 11, color: '#B42318', fontWeight: '800'}}>Delete</Text></TouchableOpacity> : null}
+      </View> : <Pill color={C.blueBg} textColor="#365775">VIEW</Pill>}
     </View>
     {info.length > 2 || formulaCount ? <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10}}>
       {info.slice(2).map((item, i) => <Pill key={i}>{item}</Pill>)}
@@ -221,7 +224,7 @@ function RecordCard({sheetId, sheet, row, rowIndex, canEdit, onEdit}: any) {
   </View>;
 }
 
-function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd}: any) {
+function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDelete}: any) {
   if (!sheet) return <View style={{padding: 24}}><Text style={{color: C.muted}}>This sheet is not available in the cloud yet. The owner can initialise the workbook from Settings.</Text></View>;
   const headers = headersForSheet(sheetId, sheet);
   const readOnly = role !== 'owner' || ['project_dashboard', 'floor_summary'].includes(sheetId);
@@ -240,7 +243,7 @@ function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd}: any
         {sheetId === 'project_dashboard' ? <DashboardFormulaSummary stats={calculateDashboard(allSheets || {})} /> : null}
         {sheetId === 'floor_summary' ? <FloorSummaryBlock sheets={allSheets || {}} /> : null}
       </View>
-      {records.length ? records.map(({row, index}: any) => <RecordCard key={`${sheetId}-${index}`} sheetId={sheetId} sheet={sheet} row={row} rowIndex={index} canEdit={!readOnly} onEdit={onEdit} />) : !['project_dashboard', 'floor_summary'].includes(sheetId) ? <View style={cardStyle()}><Text style={{color: C.muted, fontSize: 13}}>No records entered yet.</Text></View> : null}
+      {records.length ? records.map(({row, index}: any) => <RecordCard key={`${sheetId}-${index}`} sheetId={sheetId} sheet={sheet} row={row} rowIndex={index} canEdit={!readOnly} canDelete={!readOnly && sheetId === 'daily_expenses'} onEdit={onEdit} onDelete={onDelete} />) : !['project_dashboard', 'floor_summary'].includes(sheetId) ? <View style={cardStyle()}><Text style={{color: C.muted, fontSize: 13}}>No records entered yet.</Text></View> : null}
     </ScrollView>
   </View>;
 }
@@ -555,6 +558,51 @@ export default function App() {
     setSyncState('LIVE SYNC');
   };
 
+  const deleteExpense = (rowIndex: number) => {
+    if (role !== 'owner' || !user || !db || demoMode) {
+      Alert.alert('Cannot delete', 'Only the connected project owner can delete expenses.');
+      return;
+    }
+
+    Alert.alert(
+      'Delete expense?',
+      'This expense will be permanently deleted. Dashboard and Floor Summary totals will be updated.',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const current = sheets.daily_expenses;
+            if (!current || rowIndex <= 0 || rowIndex >= (current.values || []).length) {
+              Alert.alert('Delete failed', 'The selected expense could not be found.');
+              return;
+            }
+
+            const next: SheetDocument = {
+              ...current,
+              values: [...(current.values || [])],
+              formulas: [...(current.formulas || [])]
+            };
+            next.values.splice(rowIndex, 1);
+            next.formulas.splice(rowIndex, 1);
+
+            try {
+              setSyncState('SAVING');
+              await saveSheet('daily_expenses', next, user.uid);
+              setSheets(previous => ({...previous, daily_expenses: next}));
+              setSyncState('LIVE SYNC');
+              Alert.alert('Deleted', 'The expense has been deleted successfully.');
+            } catch (e: any) {
+              setSyncState('SYNC ERROR');
+              Alert.alert('Delete failed', e?.message || 'Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const doSeed = async () => {
     if (role !== 'owner' || !user) return;
     setInitialising(true);
@@ -592,7 +640,7 @@ export default function App() {
       }
       return <SheetView sheetId={selectedSheet} sheet={selectedData} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => {setSelectedSheet(''); setScreen('Dashboard');}} onEdit={(index: number) => startEdit(selectedSheet, index)} onAdd={() => startAdd(selectedSheet)} />;
     }
-    if (screen === 'Expenses') return <View style={{flex:1}}><SheetView sheetId="daily_expenses" sheet={sheets.daily_expenses} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('daily_expenses', index)} onAdd={() => startAdd('daily_expenses')} /></View>;
+    if (screen === 'Expenses') return <View style={{flex:1}}><SheetView sheetId="daily_expenses" sheet={sheets.daily_expenses} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('daily_expenses', index)} onAdd={() => startAdd('daily_expenses')} onDelete={deleteExpense} /></View>;
     if (screen === 'Progress') return <View style={{flex:1}}><SheetView sheetId="work_schedule" sheet={sheets.work_schedule} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('work_schedule', index)} onAdd={() => startAdd('work_schedule')} /></View>;
     if (screen === 'Activity') return <ActivityScreen activities={activities}/>;
     return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} />;
