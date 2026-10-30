@@ -95,7 +95,6 @@ function LoginScreen({onLogin, demo}: {onLogin: (email: string, password: string
           <Text style={{fontSize: 11, color: C.muted, textAlign: 'center', marginTop: 13}}>Your role is assigned by the project administrator. Only the owner account can edit construction data.</Text>
         </>}
       </View>
-      {demo ? <TouchableOpacity onPress={demo} style={{alignSelf: 'center', padding: 15, marginTop: 8}}><Text style={{fontWeight: '800', color: C.green}}>Open workbook preview</Text></TouchableOpacity> : null}
     </ScrollView>
   </SafeAreaView>;
 }
