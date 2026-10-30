@@ -168,6 +168,8 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense}: 
       <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 9}}>
         <TouchableOpacity onPress={onAddExpense} style={{...buttonStyle(role !== 'owner'), flex: 1, minWidth: 125, opacity: role === 'owner' ? 1 : 0.55}}><Text style={{fontWeight: '800', color: '#FFF'}}>＋ Add expense</Text></TouchableOpacity>
         <TouchableOpacity onPress={() => onOpen('materials_boq')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}><Text style={{fontWeight: '800', color: C.green}}>▤ Materials</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => onOpen('labour_work')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}><Text style={{fontWeight: '800', color: C.green}}>♧ Labour</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => onOpen('professional_fees')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}><Text style={{fontWeight: '800', color: C.green}}>▣ Professional fees</Text></TouchableOpacity>
         <TouchableOpacity onPress={() => onOpen('work_schedule')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}><Text style={{fontWeight: '800', color: C.green}}>◷ Work progress</Text></TouchableOpacity>
       </View>
     </View>
