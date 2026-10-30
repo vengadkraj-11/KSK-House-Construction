@@ -59,8 +59,8 @@ export function calculateDashboard(sheets: SheetMap): DashboardNumbers {
   const base = materialsBudget + labourBudget + feesBudget + miscBudget;
   const contingency = base * contingencyRate;
   const totalBudget = base + contingency;
-  const totalPaid = materialsPaid + labourPaid + feesPaid + miscPaid;
   const dailyExpenses = daily.reduce((sum, r) => sum + n(r[7]), 0);
+  const totalPaid = dailyExpenses;
   const progressRows = schedule.filter(r => has(r[2]));
   const progress = progressRows.length
     ? progressRows.reduce((sum, r) => sum + Math.max(0, Math.min(100, n(r[11]))), 0) / progressRows.length

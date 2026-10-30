@@ -174,7 +174,7 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense}: 
     </View>
 
     <View style={cardStyle()}>
-      <SectionTitle title="Recent project updates" right="All sheets" onRight={() => onOpen('')} />
+      <SectionTitle title="Recent project updates" />
       {activities.length ? activities.slice(0, 4).map((item: ActivityItem) => <View key={item.id} style={{paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.line}}><Text style={{fontSize: 13, fontWeight: '800', color: C.ink}}>{item.title || 'Project updated'}</Text><Text style={{fontSize: 11, color: C.muted, marginTop: 3}}>{item.body || 'Workbook data changed'}</Text></View>) : <Text style={{fontSize: 12, color: C.muted}}>Updates will appear here after cloud sync is connected.</Text>}
     </View>
   </ScrollView>;
@@ -323,6 +323,8 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
                 </View>
                 {(() => {
                   const optionsByHeader: Record<string, string[]> = {
+                    'Floor / Area': ['Ground Floor', 'First Floor', 'Common/External'],
+                    'Work Stage': ['Site Prep', 'Foundation', 'Plinth', 'Structure', 'Brickwork', 'Roof Slab', 'Plastering', 'Plumbing', 'Electrical', 'Flooring', 'Painting', 'Finishing', 'External Works'],
                     'Expense Category': ['Material', 'Engineer/Architect', 'Labour', 'Equipment', 'Transport', 'Other'],
                     'Payment Mode': ['UPI', 'Bank Transfer', 'Cash', 'Cheque'],
                     'Paid By': ['Vengadesh', 'Kanakaraj'],
@@ -590,7 +592,7 @@ export default function App() {
       if (selectedSheet === 'quotation_compare' && !sheets.quotation_compare) {
         return <View style={{padding:20}}><Text style={{fontSize:16, fontWeight:'800', color:C.ink}}>Quotation Compare</Text><Text style={{color:C.muted, marginTop:6}}>This extra module will be created when the workbook is imported to Firebase.</Text>{canEdit ? <TouchableOpacity onPress={async()=>{if(user){await ensureQuoteSheet(user.uid); Alert.alert('Ready','Quotation Compare is now available.')}}} style={{...buttonStyle(), marginTop:14}}><Text style={{color:'#FFF',fontWeight:'800'}}>Create comparison sheet</Text></TouchableOpacity> : null}</View>;
       }
-      return <SheetView sheetId={selectedSheet} sheet={selectedData} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => setSelectedSheet('')} onEdit={(index: number) => startEdit(selectedSheet, index)} onAdd={() => startAdd(selectedSheet)} />;
+      return <SheetView sheetId={selectedSheet} sheet={selectedData} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => {setSelectedSheet(''); setScreen('Dashboard');}} onEdit={(index: number) => startEdit(selectedSheet, index)} onAdd={() => startAdd(selectedSheet)} />;
     }
     if (screen === 'Expenses') return <View style={{flex:1}}><SheetView sheetId="daily_expenses" sheet={sheets.daily_expenses} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('daily_expenses', index)} onAdd={() => startAdd('daily_expenses')} /></View>;
     if (screen === 'Progress') return <View style={{flex:1}}><SheetView sheetId="work_schedule" sheet={sheets.work_schedule} allSheets={sheets} role={canEdit ? 'owner' : role} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('work_schedule', index)} onAdd={() => startAdd('work_schedule')} /></View>;
@@ -606,10 +608,6 @@ export default function App() {
         <View><Text style={{fontSize:15,fontWeight:'900',color:C.ink}}>KSK House</Text><Text style={{fontSize:10,color:C.muted}}>{screen === 'Dashboard' ? 'Project overview' : screen === 'Sheets' ? (selectedSheet ? SHEET_TITLES[selectedSheet] : 'Project worksheets') : screen}</Text></View>
       </View>
       <View style={{flexDirection:'row',alignItems:'center',gap:10}}>
-        <TouchableOpacity onPress={() => {setScreen('Activity'); setSelectedSheet('');}} style={{padding:6, position:'relative'}}>
-          <Text style={{fontSize:20,color:C.green}}>♧</Text>
-          {activities.length ? <View style={{position:'absolute',right:0,top:0,width:8,height:8,borderRadius:5,backgroundColor:C.gold,borderWidth:1,borderColor:C.paper}}/> : null}
-        </TouchableOpacity>
         <View style={{width:7,height:7,borderRadius:6,backgroundColor:syncLabel === 'LIVE SYNC' ? '#2B9A69' : C.gold}}/>
         <Text style={{fontSize:10,fontWeight:'800',color:C.muted}}>{syncLabel === 'LIVE SYNC' ? 'LIVE' : syncLabel === 'SAVING' ? 'SAVING' : 'PREVIEW'}</Text>
       </View>
@@ -617,10 +615,13 @@ export default function App() {
     <View style={{flex:1}}>{renderScreen()}</View>
     <View style={{height:64, backgroundColor:C.white, borderTopColor:C.line, borderTopWidth:1, flexDirection:'row', justifyContent:'space-around', alignItems:'center', paddingBottom: Platform.OS === 'android' ? 3 : 0}}>
       {[
-        ['Dashboard','⌂'],['Sheets','▤'],['Expenses','₹'],['Progress','◷'],['Settings','⚙']
-      ].map(([id,icon]) => <TouchableOpacity key={id} onPress={() => {setScreen(id as any); setSelectedSheet('');}} style={{alignItems:'center',justifyContent:'center',width:64,height:52}}>
-        <Text style={{fontSize:18,color:screen === id ? C.green : '#82918B',fontWeight:'800'}}>{icon}</Text>
-        <Text style={{fontSize:10,marginTop:3,color:screen === id ? C.green : C.muted,fontWeight:screen === id ? '900' : '600'}}>{id}</Text>
+        ['Dashboard','⌂','Dashboard',''],
+        ['Sheets','⚙','Project Setup','project_setup'],
+        ['Expenses','₹','Daily Expenses','daily_expenses'],
+        ['Sheets','▦','Floor Summary','floor_summary']
+      ].map(([id,icon,label,sheetId]) => <TouchableOpacity key={label} onPress={() => {setScreen(id as any); setSelectedSheet(sheetId);}} style={{alignItems:'center',justifyContent:'center',width:82,height:52}}>
+        <Text style={{fontSize:18,color:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? C.green : '#82918B',fontWeight:'800'}}>{icon}</Text>
+        <Text style={{fontSize:10,marginTop:3,color:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? C.green : C.muted,fontWeight:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? '900' : '600'}}>{label}</Text>
       </TouchableOpacity>)}
     </View>
     <RowEditor visible={modalVisible} sheetId={editingSheetId} sheet={sheets[editingSheetId]} rowIndex={editingRow} isNew={editingIsNew} onClose={() => setModalVisible(false)} onSave={saveEditedSheet}/>
