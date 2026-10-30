@@ -1015,17 +1015,64 @@ export default function App() {
       </View>
     </View>
     <View style={{flex:1}}>{renderScreen()}</View>
-    <View style={{height:64, backgroundColor:C.white, borderTopColor:C.line, borderTopWidth:1, flexDirection:'row', justifyContent:'space-around', alignItems:'center', paddingBottom: Platform.OS === 'android' ? 3 : 0}}>
-      {[
-        ['Dashboard','⌂','Dashboard',''],
-        ['Sheets','⚙','Project Setup','project_setup'],
-        ['Expenses','₹','Daily Expenses','daily_expenses'],
-        ['Sheets','▦','Floor Summary','floor_summary']
-      ].map(([id,icon,label,sheetId]) => <TouchableOpacity key={label} onPress={() => {setScreen(id as any); setSelectedSheet(sheetId);}} style={{alignItems:'center',justifyContent:'center',width:82,height:52}}>
-        <Text style={{fontSize:18,color:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? C.green : '#82918B',fontWeight:'800'}}>{icon}</Text>
-        <Text style={{fontSize:10,marginTop:3,color:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? C.green : C.muted,fontWeight:(id === 'Dashboard' ? screen === id : selectedSheet === sheetId) ? '900' : '600'}}>{language === 'ta' ? ({Dashboard: 'முகப்பு', 'Project Setup': 'திட்ட அமைப்பு', 'Daily Expenses': 'தினசரி செலவுகள்', 'Floor Summary': 'தளச் சுருக்கம்'} as Record<string, string>)[label] || label : label}</Text>
-      </TouchableOpacity>)}
-    </View>
+
+<View style={{height:66, backgroundColor:C.white, borderTopColor:C.line, borderTopWidth:1, flexDirection:'row', alignItems:'center', paddingHorizontal:2}}>
+  {[
+    ['Dashboard','⌂','Dashboard',''],
+    ['Sheets','⚙','Project Setup','project_setup'],
+    ['Expenses','₹','Daily Expenses','daily_expenses'],
+    ['Sheets','▦','Floor Summary','floor_summary'],
+    ['Activity','◷','Activity',''],
+    ['Settings','☰','Settings','']
+  ].map(([id,icon,label,sheetId]) => {
+    const active = id === 'Sheets'
+      ? screen === 'Sheets' && selectedSheet === sheetId
+      : screen === id;
+
+    return (
+      <TouchableOpacity
+        key={label}
+        onPress={() => {
+          setScreen(id as any);
+          setSelectedSheet(sheetId);
+        }}
+        style={{
+          flex:1,
+          alignItems:'center',
+          justifyContent:'center',
+          height:58,
+          minWidth:0
+        }}
+      >
+        <Text style={{
+          fontSize:18,
+          color:active ? C.green : '#82918B',
+          fontWeight:'800'
+        }}>
+          {icon}
+        </Text>
+        <Text style={{
+          fontSize:9,
+          marginTop:3,
+          color:active ? C.green : C.muted,
+          fontWeight:active ? '900' : '600'
+        }}>
+          {language === 'ta'
+            ? ({
+                Dashboard:'முகப்பு',
+                'Project Setup':'திட்ட அமைப்பு',
+                'Daily Expenses':'தினசரி செலவுகள்',
+                'Floor Summary':'தளச் சுருக்கம்',
+                Activity:'செயல்பாடு',
+                Settings:'அமைப்புகள்'
+              } as Record<string,string>)[label] || label
+            : label}
+        </Text>
+      </TouchableOpacity>
+    );
+  })}
+</View>
+
     <RowEditor visible={modalVisible} sheetId={editingSheetId} sheet={sheets[editingSheetId]} rowIndex={editingRow} isNew={editingIsNew} language={language} onClose={() => setModalVisible(false)} onSave={saveEditedSheet}/>
   </SafeAreaView>;
 }
