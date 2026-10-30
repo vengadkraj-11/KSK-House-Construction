@@ -3,6 +3,7 @@ import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView,
   StatusBar, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
+import {Picker} from '@react-native-picker/picker';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {onAuthStateChanged, signInWithEmailAndPassword, signOut, User} from 'firebase/auth';
 import {collection, doc, getDoc, onSnapshot} from 'firebase/firestore';
@@ -63,7 +64,7 @@ function SectionTitle({title, right, onRight}: any) {
   </View>;
 }
 
-function LoginScreen({onLogin, demo}: {onLogin: (email: string, password: string) => void; demo?: boolean}) {
+function LoginScreen({onLogin, demo}: {onLogin: (email: string, password: string) => void; demo?: () => void}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -320,16 +321,50 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
                   <Text style={{fontSize: 11, fontWeight: '800', color: C.muted}}>{h.toUpperCase()}</Text>
                   {formula ? <Text style={{fontSize: 10, color: C.gold, fontWeight: '800'}}>FORMULA · LOCKED</Text> : null}
                 </View>
-                <TextInput
-                  value={values[i] || ''}
-                  onChangeText={v => setValues(prev => {const next=[...prev]; next[i]=v; return next;})}
-                  editable={!formula}
-                  keyboardType={isMoneyHeader(h) || /qty|complete|duration|delay|area|%/i.test(h) ? 'numeric' : 'default'}
-                  multiline={/notes|scope|specification/i.test(h)}
-                  placeholder={isDateHeader(h) ? 'YYYY-MM-DD' : `Enter ${h.toLowerCase()}`}
-                  placeholderTextColor="#9AA8A2"
-                  style={{backgroundColor: formula ? '#E8EDE9' : C.white, borderWidth: 1, borderColor: C.line, borderRadius: 11, padding: 12, color: formula ? C.muted : C.ink, minHeight: /notes|scope|specification/i.test(h) ? 68 : 45, textAlignVertical: 'top'}}
-                />
+                {(() => {
+                  const optionsByHeader: Record<string, string[]> = {
+                    'Expense Category': ['Material', 'Engineer/Architect', 'Labour', 'Equipment', 'Transport', 'Other'],
+                    'Payment Mode': ['UPI', 'Bank Transfer', 'Cash', 'Cheque'],
+                    'Paid By': ['Vengadesh', 'Kanakaraj'],
+                    'Received by': ['Kanakaraj', 'Shanmugapandi'],
+                    'Bill Received?': ['Yes', 'No']
+                  };
+                  const options = sheetId === 'daily_expenses' ? optionsByHeader[h] : undefined;
+
+                  if (options) {
+                    return (
+                      <View style={{backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 11, overflow: 'hidden'}}>
+                        <Picker
+                          selectedValue={values[i] || ''}
+                          onValueChange={v => setValues(prev => {
+                            const next = [...prev];
+                            next[i] = v;
+                            return next;
+                          })}
+                          enabled={!formula}
+                        >
+                          <Picker.Item label={`Select ${h}`} value="" />
+                          {options.map(option => (
+                            <Picker.Item key={option} label={option} value={option} />
+                          ))}
+                        </Picker>
+                      </View>
+                    );
+                  }
+
+                  return (
+                    <TextInput
+                      value={values[i] || ''}
+                      onChangeText={v => setValues(prev => {const next=[...prev]; next[i]=v; return next;})}
+                      editable={!formula}
+                      keyboardType={isMoneyHeader(h) || /qty|complete|duration|delay|area|%/i.test(h) ? 'numeric' : 'default'}
+                      multiline={/notes|scope|specification/i.test(h)}
+                      placeholder={isDateHeader(h) ? 'YYYY-MM-DD' : `Enter ${h.toLowerCase()}`}
+                      placeholderTextColor="#9AA8A2"
+                      style={{backgroundColor: formula ? '#E8EDE9' : C.white, borderWidth: 1, borderColor: C.line, borderRadius: 11, padding: 12, color: formula ? C.muted : C.ink, minHeight: /notes|scope|specification/i.test(h) ? 68 : 45, textAlignVertical: 'top'}}
+                    />
+                  );
+                })()}
               </View>;
             })}
           </ScrollView>
