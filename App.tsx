@@ -338,9 +338,17 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
                     'Payment Mode': ['UPI', 'Bank Transfer', 'Cash', 'Cheque'],
                     'Paid By': ['Vengadesh', 'Kanakaraj'],
                     'Bill Received?': ['Yes', 'No'],
-                    'Status': ['Not Started', 'In Progress', 'On Hold', 'Delayed', 'Completed']
+                    'Status': ['Not Started', 'In Progress', 'On Hold', 'Delayed', 'Completed'],
+                    'Unit': ['Sq.ft', 'Sq.m', 'Running ft', 'Cft', 'Cum', 'Nos', 'Days', 'Hours', 'Job', 'Lumpsum'],
+                    'Work Status': ['Not Started', 'In Progress', 'On Hold', 'Delayed', 'Completed'],
+                    'Service / Fee Head': [
+                      'Architect / plan preparation',
+                      'Site engineer / supervision',
+                      'Approval / permit / local body fees',
+                      'Other professional fee'
+                    ]
                   };
-                  const options = ['daily_expenses', 'work_schedule'].includes(sheetId) ? optionsByHeader[h] : undefined;
+                  const options = ['daily_expenses', 'work_schedule', 'labour_work', 'professional_fees'].includes(sheetId) ? optionsByHeader[h] : undefined;
 
                   if (options) {
                     return (
@@ -411,7 +419,7 @@ function makeFormulaRow(sheetId: string, excelRow: number, width: number) {
   }
   if (sheetId === 'materials_ground' || sheetId === 'materials_first') {
     set(9, `=IF(OR(G${excelRow}="",H${excelRow}=""),"",G${excelRow}*H${excelRow}*(1+IF(I${excelRow}="",0,I${excelRow})))`);
-    set(15, `=IF(OR(O${excelRow}="",J${excelRow}=""),"",O${excelRow}*J${excelRow})`);
+    set(15, `=IF(OR(O${excelRow}="",H${excelRow}=""),"",O${excelRow}*H${excelRow})`);
     set(16, `=IF(G${excelRow}="","",G${excelRow}-IF(O${excelRow}="",0,O${excelRow}))`);
   }
   return result;

@@ -96,13 +96,16 @@ export function displayCell(sheetId: string, sheet: SheetDocument, rowIndex: num
   }
   if (sheetId === 'professional_fees') {
     if (colIndex === 5) return has(row[4]) ? num(row[4]) : '';
+    const isSiteEngineer = /site\s*engineer/i.test(String(row[1] || ''));
+    const paymentTotal = (sheet.values || []).slice(1).reduce(
+      (sum: number, r: any[]) => sum + (!has(r[1]) && has(r[7]) ? num(r[7]) : 0), 0
+    );
     if (colIndex === 9) {
-      const paymentTotal = (sheet.values || []).slice(1).reduce((sum: number, r: any[]) => sum + (!has(r[1]) && has(r[7]) ? num(r[7]) : 0), 0);
-      return paymentTotal || '';
+      return isSiteEngineer ? (paymentTotal || '') : row[9];
     }
     if (colIndex === 10) {
-      const paymentTotal = (sheet.values || []).slice(1).reduce((sum: number, r: any[]) => sum + (!has(r[1]) && has(r[7]) ? num(r[7]) : 0), 0);
-      return has(row[5]) ? num(row[5]) - paymentTotal : '';
+      const paid = isSiteEngineer ? paymentTotal : num(row[9]);
+      return has(row[5]) ? num(row[5]) - paid : '';
     }
   }
   if (sheetId === 'misc_equipment' && colIndex === 6) {
@@ -110,7 +113,7 @@ export function displayCell(sheetId: string, sheet: SheetDocument, rowIndex: num
   }
   if ((sheetId === 'materials_ground' || sheetId === 'materials_first')) {
     if (colIndex === 9) return has(row[6]) && has(row[7]) ? num(row[6]) * num(row[7]) * (1 + num(row[8])) : '';
-    if (colIndex === 15) return has(row[14]) && has(row[9]) ? num(row[14]) * num(row[9]) : '';
+    if (colIndex === 15) return has(row[14]) && has(row[7]) ? num(row[14]) * num(row[7]) : '';
     if (colIndex === 16) return has(row[6]) ? num(row[6]) - num(row[14]) : '';
   }
   if (sheetId === 'work_schedule') {

@@ -35,26 +35,26 @@ export function calculateDashboard(sheets: SheetMap): DashboardNumbers {
     const amount = formula ? (has(r[6]) && has(r[7]) ? n(r[6]) * n(r[7]) * (1 + n(r[8])) : 0) : (has(r[9]) ? n(r[9]) : 0);
     return sum + amount;
   }, 0);
-  const materialsPaid = materials.reduce((sum, r) => sum + n(r[14]), 0);
+  const materialsPaid = daily.reduce((sum, r) =>
+    sum + (/^material$/i.test(String(r[4] || '')) ? n(r[7]) : 0), 0);
   const labourBudget = labour.reduce((sum, r, index) => {
     const formula = sheets.labour_work?.formulas?.[index + 1]?.[7];
     return sum + (formula ? (has(r[5]) && has(r[6]) ? n(r[5]) * n(r[6]) : 0) : (has(r[7]) ? n(r[7]) : 0));
   }, 0);
-  const labourPaid = labour.reduce((sum, r) => sum + n(r[12]), 0);
+  const labourPaid = daily.reduce((sum, r) =>
+    sum + (/^labour$/i.test(String(r[4] || '')) ? n(r[7]) : 0), 0);
   const feesBudget = fees.reduce((sum, r, index) => {
     const formula = sheets.professional_fees?.formulas?.[index + 1]?.[5];
     return sum + (formula ? n(r[4]) : (has(r[5]) ? n(r[5]) : n(r[4])));
   }, 0);
-  const feesPaid = fees.reduce((sum, r, index) => {
-    const formula = sheets.professional_fees?.formulas?.[index + 1]?.[9];
-    if (formula) return sum; // calculated from the payment-detail rows below
-    return sum + n(r[9]);
-  }, 0) + fees.reduce((sum, r) => sum + (!has(r[1]) && has(r[7]) ? n(r[7]) : 0), 0);
+  const feesPaid = daily.reduce((sum, r) =>
+    sum + (/^engineer\/architect$/i.test(String(r[4] || '')) ? n(r[7]) : 0), 0);
   const miscBudget = misc.reduce((sum, r, index) => {
     const formula = sheets.misc_equipment?.formulas?.[index + 1]?.[6];
     return sum + (formula ? (has(r[4]) && has(r[5]) ? n(r[4]) * n(r[5]) : 0) : (has(r[6]) ? n(r[6]) : 0));
   }, 0);
-  const miscPaid = misc.reduce((sum, r) => sum + n(r[7]), 0);
+  const miscPaid = daily.reduce((sum, r) =>
+    sum + (/^(equipment|transport|other)$/i.test(String(r[4] || '')) ? n(r[7]) : 0), 0);
   const contingencyRate = n(setup?.[6]?.[1]);
   const base = materialsBudget + labourBudget + feesBudget + miscBudget;
   const contingency = base * contingencyRate;
