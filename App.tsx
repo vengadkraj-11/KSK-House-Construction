@@ -323,6 +323,7 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingBottom: 12}}>
             {headers.map((h: string, i: number) => {
               if (!h) return null;
+              if (sheetId === 'work_schedule' && /predecessor|planned budget|actual cost/i.test(h)) return null;
               const formula = !!currentFormulaRow[i];
               return <View key={`${h}-${i}`} style={{marginBottom: 11}}>
                 <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5}}>
@@ -336,9 +337,10 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave}: 
                     'Expense Category': ['Material', 'Engineer/Architect', 'Labour', 'Equipment', 'Transport', 'Other'],
                     'Payment Mode': ['UPI', 'Bank Transfer', 'Cash', 'Cheque'],
                     'Paid By': ['Vengadesh', 'Kanakaraj'],
-                    'Bill Received?': ['Yes', 'No']
+                    'Bill Received?': ['Yes', 'No'],
+                    'Status': ['Not Started', 'In Progress', 'On Hold', 'Delayed', 'Completed']
                   };
-                  const options = sheetId === 'daily_expenses' ? optionsByHeader[h] : undefined;
+                  const options = ['daily_expenses', 'work_schedule'].includes(sheetId) ? optionsByHeader[h] : undefined;
 
                   if (options) {
                     return (
