@@ -4,7 +4,7 @@ const {summarizeContracts, summarizeInventory} = require('../src/services/record
 const {getMaterialOptions} = require('../src/services/materialOptions.js');
 const {getDailyExpenseVoucherRows,canCreateVoucherPayment,voucherRemainingAmount,validateAgreementLink} = require('../src/services/projectRecordLinks.js');
 const {renderReceiptSection} = require('../src/services/reportReceipts.js');
-const {paymentIdForDocument,validatePaymentRecord,summarizePaymentRecords} = require('../src/services/paymentMath.js');
+const {paymentIdForDocument,isDuplicatePaymentRetry,validatePaymentRecord,summarizePaymentRecords} = require('../src/services/paymentMath.js');
 
 test('material dropdown catalogue includes distinct values from all three material sheets',()=>{
   const options=getMaterialOptions({materials_ground:{values:[['Material / Item'],['Cement'],['Steel']]},materials_first:{values:[['Item'],['Steel'],['Blocks']]},materials_boq:{values:[['Description'],['Sand'],['Tiles']]}});
@@ -108,6 +108,11 @@ test('payment IDs are deterministic and payment validation rejects invalid amoun
   assert.equal(validatePaymentRecord({amount:25,date:'2026-04-05',paymentTo:'Vendor'}),true);
   assert.throws(()=>validatePaymentRecord({amount:0,date:'2026-04-05',paymentTo:'Vendor'}),/positive/);
   assert.throws(()=>validatePaymentRecord({amount:25,date:'2026-02-30',paymentTo:'Vendor'}),/valid payment date/);
+});
+
+test('payment retry for an existing stable document ID is treated as already committed',()=>{
+  assert.equal(isDuplicatePaymentRetry(false),false);
+  assert.equal(isDuplicatePaymentRetry(true),true);
 });
 
 test('payment reconciliation counts payment records once and separates advances',()=>{

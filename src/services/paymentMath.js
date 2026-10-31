@@ -3,6 +3,9 @@ function paymentIdForDocument(documentId) {
   if (!id) throw new Error('A payment document ID is required.');
   return `KSK-PAY-${id.toUpperCase()}`;
 }
+function isDuplicatePaymentRetry(recordAlreadyExists) {
+  return recordAlreadyExists === true;
+}
 function validatePaymentRecord(values = {}) {
   const amount = Number(values.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter a positive payment amount.');
@@ -24,4 +27,4 @@ function summarizePaymentRecords(payments = [], contracts = []) {
   });
   return { paid, advances, contractValue, remaining: linked.reduce((sum,item)=>sum+item.remaining,0), overpaid: linked.reduce((sum,item)=>sum+item.overpaid,0), count: payments.length };
 }
-module.exports = { paymentIdForDocument, validatePaymentRecord, summarizePaymentRecords };
+module.exports = { paymentIdForDocument, isDuplicatePaymentRetry, validatePaymentRecord, summarizePaymentRecords };

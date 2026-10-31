@@ -96,7 +96,7 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
       setRecords(old => ({...old, [module.type]: rows}));
       setLoaded(old => ({...old, [module.type]: true}));
       setErrors(old => ({...old, [module.type]: ''}));
-    }, message => { setErrors(old => ({...old, [module.type]: message})); setLoaded(old => ({...old, [module.type]: true})); }));
+    }, message => { setErrors(old => ({...old, [module.type]: message})); setLoaded(old => ({...old, [module.type]: true})); }, uid));
     return () => stops.forEach(stop => stop());
   }, [owner, uid, retrySubscriptions]);
 

@@ -5,8 +5,11 @@ service cloud.firestore {
       return request.auth != null;
     }
     function memberRole(projectId) {
-      let member = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return member.data.projectId == projectId ? member.data.role : null;
+      let memberPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(memberPath)
+        && get(memberPath).data.get('projectId', null) == projectId
+        ? get(memberPath).data.get('role', null)
+        : null;
     }
     function hasProjectAccess(projectId) {
       return signedIn() && (memberRole(projectId) == 'owner' || memberRole(projectId) == 'viewer');
@@ -20,6 +23,19 @@ service cloud.firestore {
         || (request.resource.data.contractId is string
           && exists(/databases/$(database)/documents/projects/$(projectId)/contracts/$(request.resource.data.contractId))
           && get(/databases/$(database)/documents/projects/$(projectId)/contracts/$(request.resource.data.contractId)).data.person == request.resource.data.person);
+    }
+    function validPaymentCreate(projectId) {
+      return request.resource.data.keys().hasAll(['createdBy', 'createdAt', 'amount', 'date'])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.date is string
+        && request.resource.data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && (request.resource.data.get('paymentTo', '') is string)
+        && (request.resource.data.get('person', '') is string)
+        && (request.resource.data.get('paymentTo', '') != '' || request.resource.data.get('person', '') != '')
+        && validPaymentAgreement(projectId);
     }
 
     // Role documents are provisioned by the project administrator only.
@@ -76,12 +92,7 @@ service cloud.firestore {
     // from the original Excel-style worksheets.
     match /projects/{projectId}/payments/{recordId} {
       allow read: if hasProjectAccess(projectId);
-      allow create: if isOwner(projectId)
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.amount is number
-        && request.resource.data.amount >= 0
-        && validPaymentAgreement(projectId);
+      allow create: if isOwner(projectId) && validPaymentCreate(projectId);
       allow update: if isOwner(projectId) && validPaymentAgreement(projectId);
       allow delete: if isOwner(projectId);
     }

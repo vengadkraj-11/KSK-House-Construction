@@ -19,6 +19,7 @@ import {LOCAL_WORKBOOK, SHEET_ORDER, SHEET_TITLES, ICONS, headersForSheet, meani
 import {calculateDashboard, calculateFloorSummary, countMaterials} from './src/services/calculations';
 import {enableNotifications, showActivityNotification} from './src/services/notifications';
 import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuoteSheet, ensureSheetRecordIds, clearActivityHistory} from './src/services/projectSync';
+import {runProjectPermissionDiagnostics, setProjectMembershipDiagnostic} from './src/services/projectRecords';
 import {ActivityItem, Role, SheetDocument, SheetMap} from './src/types';
 import ProjectRecords from './src/components/ProjectRecords';
 
@@ -884,6 +885,13 @@ function ActivityScreen({activities, language, canClear, onClear}: any) {
 
 function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed, onNotifications, onSignOut, onOriginal, language, onLanguageChange, onExportExcel, onExportPdf}: any) {
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
+  const runDiagnostics = async () => {
+    setDiagnosticsBusy(true);
+    try { setDiagnostics(await runProjectPermissionDiagnostics()); }
+    finally { setDiagnosticsBusy(false); }
+  };
   return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 35}}>
     <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>{t('Account & access', 'கணக்கு மற்றும் அணுகல்')}</Text>
@@ -905,6 +913,19 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
         </Picker>
       </View>
     </View>
+
+    {role === 'owner' || role === 'viewer' ? <View style={cardStyle({marginBottom: 12})}>
+      <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>Permission diagnostics</Text>
+      <Text style={{fontSize: 12, color: C.muted, lineHeight: 18, marginTop: 5}}>Runs read-only checks for project membership, payment reads and listener, stock, contracts, and an existing payment receipt reference. No records are written.</Text>
+      <TouchableOpacity disabled={diagnosticsBusy} onPress={()=>void runDiagnostics()} style={{...buttonStyle(diagnosticsBusy, true), marginTop: 11}}>
+        {diagnosticsBusy ? <ActivityIndicator color={C.green}/> : <Text style={{color:C.green,fontWeight:'800'}}>{diagnostics ? 'Run checks again' : 'Run read-only checks'}</Text>}
+      </TouchableOpacity>
+      {diagnostics ? <View style={{marginTop:10}}>
+        <Text style={{fontSize:11,color:C.ink}}>Firebase project: {diagnostics.firebaseProjectId} · Expected: {diagnostics.expectedFirebaseProjectId}</Text>
+        <Text style={{fontSize:11,color:C.ink,marginTop:3}}>Membership: {diagnostics.membership} · Role: {diagnostics.role||'unverified'}</Text>
+        {diagnostics.checks.map((check:any,index:number)=><Text key={`${check.operation}-${index}`} style={{fontSize:11,color:check.status==='passed'?C.green:check.status==='failed'?C.red:C.muted,marginTop:4}}>{check.status.toUpperCase()} · {check.operation} · {check.path}{check.errorCode?` · ${check.errorCode}`:''}</Text>)}
+      </View>:null}
+    </View>:null}
 
     <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>
@@ -951,6 +972,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role>(null);
   const [roleChecked, setRoleChecked] = useState(false);
+  const [membershipIssue, setMembershipIssue] = useState<'missing'|'wrong-project'|'invalid-role'|'unavailable'|null>(null);
   const [sheets, setSheets] = useState<SheetMap>(LOCAL_WORKBOOK);
   const [cloudSheetsLoaded, setCloudSheetsLoaded] = useState(false);
   const [cloudCount, setCloudCount] = useState(0);
@@ -998,6 +1020,8 @@ export default function App() {
       // Never let a previous account's role authorize listeners for the next
       // account while its membership document is still loading.
       setRole(null);
+      setMembershipIssue(null);
+      setProjectMembershipDiagnostic(next ? 'loading' : 'signed-out', null);
       setRoleChecked(!next);
     });
   }, []);
@@ -1009,8 +1033,11 @@ export default function App() {
       const membership = snapshot.data();
       const assigned = membership?.projectId === 'ksk' ? membership?.role : null;
       setRole(assigned === 'owner' || assigned === 'viewer' ? assigned : null);
+      setMembershipIssue(!snapshot.exists() ? 'missing' : membership?.projectId !== 'ksk' ? 'wrong-project' : assigned !== 'owner' && assigned !== 'viewer' ? 'invalid-role' : null);
+      setProjectMembershipDiagnostic(!snapshot.exists() ? 'missing' : membership?.projectId !== 'ksk' ? 'wrong-project' : assigned === 'owner' || assigned === 'viewer' ? 'verified' : 'invalid-role', assigned === 'owner' || assigned === 'viewer' ? assigned : null);
       setRoleChecked(true);
-    }, () => {setRole(null); setRoleChecked(true);});
+      if (__DEV__) console.info('[membership]', {operation: 'membership snapshot', path: 'users/{authenticatedUid}', status: !snapshot.exists() ? 'missing' : membership?.projectId !== 'ksk' ? 'wrong-project' : assigned === 'owner' || assigned === 'viewer' ? 'verified' : 'invalid-role', projectId: membership?.projectId || null, role: assigned === 'owner' || assigned === 'viewer' ? assigned : null});
+    }, error => {setRole(null); setMembershipIssue('unavailable'); setProjectMembershipDiagnostic('unavailable', null); setRoleChecked(true); if (__DEV__) console.warn('[membership]', {operation: 'membership snapshot', path: 'users/{authenticatedUid}', code: error?.code || 'unknown', projectId: 'ksk', role: null});});
   }, [user]);
 
   useEffect(() => {
@@ -1380,7 +1407,14 @@ export default function App() {
   if (isFirebaseConfigured && !demoMode && (!user || !roleChecked || !role)) {
     if (!user) return <LoginScreen onLogin={signIn} demo={() => {setDemoMode(true); setSheets(LOCAL_WORKBOOK);}} />;
     if (!roleChecked) return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', alignItems:'center'}}><ActivityIndicator color={C.green}/><Text style={{color:C.muted, marginTop:12}}>{language === 'ta' ? 'திட்ட அணுகலைச் சரிபார்க்கிறது…' : 'Checking project access…'}</Text></SafeAreaView>;
-    return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', padding:24}}><View style={cardStyle()}><Text style={{fontSize:20, fontWeight:'900', color:C.ink}}>{language === 'ta' ? 'அணுகல் ஒதுக்கப்படவில்லை' : 'Access not assigned'}</Text><Text style={{fontSize:13, lineHeight:20, color:C.muted, marginTop:9}}>{language === 'ta' ? 'இந்த Firebase கணக்கிற்கு KSK திட்டத்தில் உரிமையாளர் அல்லது பார்வையாளர் அனுமதி இல்லை. Firestore-இல் அனுமதியை ஒதுக்க திட்ட நிர்வாகியிடம் கேட்டு மீண்டும் உள்நுழையவும்.' : 'This Firebase account does not have an owner or viewer role in the KSK project. Ask the project administrator to assign the role in Firestore, then sign in again.'}</Text><TouchableOpacity onPress={performSignOut} style={{...buttonStyle(), marginTop:16}}><Text style={{color:'#FFF', fontWeight:'800'}}>{language === 'ta' ? 'வெளியேறு' : 'Sign out'}</Text></TouchableOpacity></View></SafeAreaView>;
+    const accessMessage = membershipIssue === 'missing'
+      ? 'User membership document is missing at users/{authenticatedUid}.'
+      : membershipIssue === 'wrong-project'
+        ? 'Wrong project ID in membership. Expected projectId "ksk".'
+        : membershipIssue === 'unavailable'
+          ? 'Could not read the user membership document. Check network and Firestore permissions.'
+          : 'Membership role must be "owner" or "viewer" for project "ksk".';
+    return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', padding:24}}><View style={cardStyle()}><Text style={{fontSize:20, fontWeight:'900', color:C.ink}}>{language === 'ta' ? 'அணுகல் ஒதுக்கப்படவில்லை' : 'Project membership issue'}</Text><Text style={{fontSize:13, lineHeight:20, color:C.muted, marginTop:9}}>{language === 'ta' ? 'இந்த Firebase கணக்கிற்கு KSK திட்டத்தில் உரிமையாளர் அல்லது பார்வையாளர் அனுமதி இல்லை. Firestore-இல் அனுமதியை ஒதுக்க திட்ட நிர்வாகியிடம் கேட்டு மீண்டும் உள்நுழையவும்.' : accessMessage}</Text><TouchableOpacity onPress={performSignOut} style={{...buttonStyle(), marginTop:16}}><Text style={{color:'#FFF', fontWeight:'800'}}>{language === 'ta' ? 'வெளியேறு' : 'Sign out'}</Text></TouchableOpacity></View></SafeAreaView>;
   }
 
   const syncLabel = demoMode || !user ? 'LOCAL PREVIEW' : syncState;

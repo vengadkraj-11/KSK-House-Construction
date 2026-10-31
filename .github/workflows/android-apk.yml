@@ -46,6 +46,39 @@ jobs:
           test -n "$EXPO_PUBLIC_FIREBASE_PROJECT_ID" || { echo "::error::Missing FIREBASE_PROJECT_ID"; exit 1; }
           test -n "$EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" || { echo "::error::Missing FIREBASE_MESSAGING_SENDER_ID"; exit 1; }
           test -n "$EXPO_PUBLIC_FIREBASE_APP_ID" || { echo "::error::Missing FIREBASE_APP_ID"; exit 1; }
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          expected_project = "ksk-house-construction"
+          expected_package = "com.ksk.houseconstruction"
+          configured_project = os.environ["EXPO_PUBLIC_FIREBASE_PROJECT_ID"]
+          with open("google-services.json", encoding="utf-8") as config_file:
+              google_config = json.load(config_file)
+          with open(".firebaserc", encoding="utf-8") as config_file:
+              firebase_cli_config = json.load(config_file)
+          with open("app.json", encoding="utf-8") as config_file:
+              expo_config = json.load(config_file)
+          google_project = google_config.get("project_info", {}).get("project_id")
+          default_project = firebase_cli_config.get("projects", {}).get("default")
+          app_package = expo_config.get("expo", {}).get("android", {}).get("package")
+          packages = {
+              client.get("client_info", {}).get("android_client_info", {}).get("package_name")
+              for client in google_config.get("client", [])
+          }
+          if configured_project != expected_project:
+              sys.exit("::error::FIREBASE_PROJECT_ID must target the expected KSK Firebase project.")
+          if google_project != configured_project:
+              sys.exit("::error::FIREBASE_PROJECT_ID does not match google-services.json project_info.project_id.")
+          if default_project != configured_project:
+              sys.exit("::error::FIREBASE_PROJECT_ID does not match .firebaserc default project.")
+          if app_package != expected_package:
+              sys.exit("::error::app.json Android package does not match the expected KSK package.")
+          if expected_package not in packages:
+              sys.exit("::error::google-services.json does not contain the expected Android package.")
+          print("Firebase project and Android package configuration validated.")
+          PY
 
       - name: Generate Android project
         run: CI=1 npx expo prebuild --platform android --no-install
