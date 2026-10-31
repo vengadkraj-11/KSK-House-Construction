@@ -59,3 +59,28 @@ export async function showActivityNotification(
     console.warn('Could not show local activity notification:', error);
   }
 }
+
+/** Schedule on this device only; no project-wide or cloud notification is sent. */
+export async function scheduleLocalReminder(title: string, body: string, dueDate: string): Promise<string> {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dueDate);
+  if (!match) return 'Reminder saved, but its date is invalid for a local notification.';
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 9, 0, 0);
+  if (date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1 || date.getDate() !== Number(match[3])) {
+    return 'Reminder saved, but its date is invalid for a local notification.';
+  }
+  if (date.getTime() <= Date.now()) return 'Reminder saved. Past dates are not scheduled on this device.';
+  if (!Device.isDevice) return 'Reminder saved. A physical device is required for local notifications.';
+  try {
+    const current = await Notifications.getPermissionsAsync();
+    const permission = current.status === 'granted' ? current : await Notifications.requestPermissionsAsync();
+    if (permission.status !== 'granted') return 'Reminder saved, but notification permission is off on this device.';
+    await Notifications.scheduleNotificationAsync({
+      content: {title, body, sound: 'default'},
+      trigger: {type: Notifications.SchedulableTriggerInputTypes.DATE, date}
+    });
+    return 'Reminder saved and scheduled on this device only.';
+  } catch (error) {
+    console.warn('Could not schedule local reminder:', error);
+    return 'Reminder saved, but could not be scheduled on this device.';
+  }
+}

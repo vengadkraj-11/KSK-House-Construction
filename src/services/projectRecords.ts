@@ -1,5 +1,5 @@
 import {
-  collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp,
+  collection, doc, onSnapshot, query, serverTimestamp,
   Timestamp, writeBatch
 } from 'firebase/firestore';
 import {db} from '../firebase';
@@ -23,10 +23,23 @@ export function subscribeProjectRecords(
 ) {
   if (!db) return () => {};
   return onSnapshot(
-    query(path(type), orderBy('createdAt', 'desc'), limit(150)),
-    snapshot => onChange(snapshot.docs.map(item => ({id: item.id, type, ...item.data()} as ProjectRecord))),
+    // Subscribe to the full collection: financial summaries must never silently
+    // omit older records because of a UI page-size limit. Sort locally so legacy
+    // documents without createdAt remain visible too.
+    query(path(type)),
+    snapshot => onChange(snapshot.docs
+      .map(item => ({id: item.id, type, ...item.data()} as ProjectRecord))
+      .sort((a, b) => recordTime(b) - recordTime(a))),
     error => onError(error.message)
   );
+}
+
+function recordTime(record: ProjectRecord): number {
+  const value = record.date || record.dueDate || record.createdAt;
+  if (value?.toMillis) return value.toMillis();
+  if (value?.toDate) return value.toDate().getTime();
+  const parsed = new Date(value || 0).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export async function addProjectRecord(
@@ -36,14 +49,16 @@ export async function addProjectRecord(
 ): Promise<string> {
   if (!db) throw new Error('Firebase is not configured.');
   if (!uid) throw new Error('Sign in is required.');
+  const numericFields = ['amount', 'quantity', 'agreedAmount', 'advance', 'unitRate', 'lowStockLevel'];
+  for (const key of numericFields) {
+    if (values[key] !== undefined) {
+      const value = Number(values[key]);
+      if (!Number.isFinite(value) || value < 0) throw new Error(`Enter a valid non-negative ${key}.`);
+      values[key] = value;
+    }
+  }
   const amount = values.amount === undefined ? undefined : Number(values.amount);
-  if (amount !== undefined && (!Number.isFinite(amount) || amount < 0)) {
-    throw new Error('Enter a valid non-negative amount.');
-  }
   const quantity = values.quantity === undefined ? undefined : Number(values.quantity);
-  if (quantity !== undefined && (!Number.isFinite(quantity) || quantity < 0)) {
-    throw new Error('Enter a valid non-negative quantity.');
-  }
   const payload: Record<string, any> = {
     ...values,
     createdBy: uid,
@@ -58,6 +73,15 @@ export async function addProjectRecord(
       throw new Error('Progress must be between 0 and 100.');
     }
     payload.percent = percent;
+  }
+  for (const key of ['date', 'dueDate', 'plannedDate', 'actualDate']) {
+    if (values[key] !== undefined && values[key] !== '') {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(values[key]));
+      const date = match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : null;
+      if (!match || !date || date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1 || date.getDate() !== Number(match[3])) {
+        throw new Error(`${key} must be a valid date in YYYY-MM-DD format.`);
+      }
+    }
   }
   const batch = writeBatch(db);
   const recordRef = doc(path(type));

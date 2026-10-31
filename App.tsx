@@ -936,7 +936,7 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
     </View>
     <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>{t('Notifications', 'அறிவிப்புகள்')}</Text>
-      <Text style={{fontSize: 12, color: C.muted, lineHeight: 18, marginTop: 5}}>{t('Enable local notifications for project updates received while this app is active.', 'செயலி திறந்திருக்கும் போது திட்டப் புதுப்பிப்புகளுக்கான உள்ளூர் அறிவிப்புகளைப் பெறவும்.')}</Text>
+      <Text style={{fontSize: 12, color: C.muted, lineHeight: 18, marginTop: 5}}>{t('Enable notifications on this device for project updates while the app is active and locally scheduled reminders. These do not notify other members.', 'செயலி திறந்திருக்கும் போது திட்டப் புதுப்பிப்புகள் மற்றும் இந்தச் சாதனத்தில் திட்டமிடப்பட்ட நினைவூட்டல்களுக்கு அறிவிப்புகளை இயக்கவும். இவை மற்ற உறுப்பினர்களுக்கு அனுப்பப்படாது.')}</Text>
       <TouchableOpacity onPress={onNotifications} style={{...buttonStyle(false, true), marginTop: 13}}><Text style={{color: C.green, fontWeight: '800'}}>{t('Enable this device', 'இந்தச் சாதனத்தைச் செயல்படுத்தவும்')}</Text></TouchableOpacity>
     </View>
     <TouchableOpacity onPress={onSignOut} style={{...buttonStyle(false, true), marginTop: 3}}><Text style={{color: C.red, fontWeight: '800'}}>{t('Sign out', 'வெளியேறு')}</Text></TouchableOpacity>
@@ -1363,7 +1363,7 @@ export default function App() {
   };
 
   const doNotifications = async () => {
-    if (!user || demoMode) {Alert.alert('Sign in required', 'Sign in to register this phone for cloud notifications.'); return;}
+    if (!user || demoMode) {Alert.alert('Sign in required', 'Sign in to enable notifications on this device.'); return;}
     try {const message = await enableNotifications(user.uid); Alert.alert('Notifications', message);}
     catch (e: any) {Alert.alert('Notification setup', e?.message || 'Could not register this device.');}
   };

@@ -10,12 +10,20 @@ A mobile project manager for the KSK G+1 house build, based on the uploaded `KSK
 - Live dashboard for estimate, paid-to-date, remaining budget, contingency and construction progress.
 - Editable row forms for the owner, including expenses, material receipts, professional fees, equipment, labour and work progress.
 - Read-only mode for the father's viewer account.
-- Firestore live listeners, Firestore security rules, an activity feed, Android push-token registration, and a Cloud Function to notify viewer devices after sheet edits.
+- Firestore live listeners, Firestore security rules, an activity feed, local device notifications, and structured payment, stock, progress, diary, approval, and reminder records.
 - A separate **Quotation Compare** module. It is additional to the 11 workbook tabs because the original dashboard mentions this feature, but the uploaded workbook does not contain a Quotation Compare worksheet.
 
 ## Current connection status
 
-This package is the Android app **source project**, not a signed APK. It has not been connected to a Firebase project or deployed from this environment because the Firebase project configuration, account UIDs, FCM credentials, and an Android build/signing environment were not supplied. Real cloud sync and push notifications become active after the setup below. The app displays the bundled workbook in local preview mode until then.
+This package is the Android app **source project**, not a signed APK. It has not been connected to a Firebase project or deployed from this environment because project configuration and account UIDs were not supplied. Cloud sync becomes active after Firebase setup. The app displays bundled workbook data in local preview mode until then.
+
+## Free-plan architecture and limits
+
+The app uses Firebase Authentication and Cloud Firestore client SDK only and is designed to run on the Firebase Spark plan. It does not require Storage, Cloud Functions, paid APIs, or server-side code. Firestore and Authentication remain subject to Google's current Spark quotas and availability limits. Local notifications are scheduled on the individual device; they do not notify other project members. Cross-device, background push notifications require a separately operated push service and are not included in the free-plan app.
+
+The `functions/` folder contains historical notification code retained for source compatibility only; the app does not call or require it. Do not deploy it as part of the Spark setup.
+
+Bill images are compressed JPEG Base64 documents in Firestore, not Firebase Storage. Firestore has a 1 MiB document limit; the app caps image payloads at 450,000 Base64 characters to leave room for document metadata. Large or numerous images consume Firestore document storage and read quota. All project members with owner or viewer roles can read bill images; only the owner can add, replace, or delete them.
 
 ## Firebase setup
 
@@ -28,7 +36,7 @@ This package is the Android app **source project**, not a signed APK. It has not
 5. Create the two sign-in accounts: your owner account and your father's account.
 6. Create a Cloud Firestore database.
 
-The Firebase web app configuration is also needed by the Firebase JavaScript SDK. Copy the web app values into a local `.env` file using `.env.example` as the template. These Firebase client configuration values are identifiers, not administrator secrets. Never put a service-account private key in `.env` or in the mobile app.
+The Firebase web app configuration is also needed by the Firebase JavaScript SDK. Set the `EXPO_PUBLIC_FIREBASE_*` values in a local `.env` file. These client configuration values are identifiers, not administrator secrets. Never put a service-account private key in `.env` or in the mobile app.
 
 ### 2. Assign the two roles
 
@@ -50,24 +58,7 @@ firebase use --add
 firebase deploy --only firestore:rules
 ```
 
-The rules permit reads only for users whose `projectId` is `ksk` and whose role is `owner` or `viewer`; sheet writes are allowed only for the KSK owner. The notification function also filters viewer devices by that same project ID. Unknown accounts have no project access. Device-token documents can be written only by the signed-in account to its own user subcollection.
-
-### 4. Configure and deploy push notifications
-
-The app asks Android for notification permission and saves the native Android FCM token in `users/{uid}/devices/{tokenId}`. The Cloud Function sends an FCM notification to viewer-role devices when a project sheet is updated.
-
-1. Confirm Firebase Cloud Messaging is enabled for the project.
-2. Ensure the `google-services.json` file belongs to the Android package `com.ksk.houseconstruction`.
-3. Install function dependencies and deploy:
-
-```bash
-cd functions
-npm install
-cd ..
-firebase deploy --only functions
-```
-
-Cloud Functions deployment requires the Blaze billing plan for deployment; review the current Firebase pricing/usage limits before enabling it. Check the current Firebase Console requirements for the project before deploying.
+The rules permit project access only for users whose `projectId` is `ksk` and whose role is `owner` or `viewer`. Sheet and structured record writes are owner-only. Bill image reads are available to both project roles. Unknown accounts have no project access. Do not deploy any broader rules from another project.
 
 ### 5. Build the Android APK
 
@@ -94,14 +85,14 @@ For a Play Store bundle, use:
 npx eas-cli build --platform android --profile production
 ```
 
-Remote Android push notifications require a real development/production build with the app's Firebase/FCM credentials; they are not available in Expo Go. Install the APK on both phones, sign in with the assigned accounts, and press **Enable this device** in Settings on your father's phone.
+The app's notifications are local to the device. They do not require FCM tokens or a Cloud Function and do not notify a second phone.
 
 ### 6. First cloud import
 
 1. Sign in on your phone with the account assigned `owner`.
 2. Open Settings → Cloud workbook → **Import workbook to cloud**.
 3. The app copies all 11 sheets into `projects/ksk/sheets` and creates the extra Quotation Compare document.
-4. Sign in on your father's phone using the `viewer` account. He will see the same Firestore data through real-time listeners and receive push notifications after your edits once notifications are enabled and the function is deployed.
+4. Sign in on the viewer's phone using the `viewer` account. They can read the same permitted project data through Firestore listeners.
 
 The import button refuses to overwrite a non-empty cloud workbook. This avoids replacing any existing cloud edits accidentally.
 
@@ -128,4 +119,7 @@ The import button refuses to overwrite a non-empty cloud workbook. This avoids r
 - The Excel template's existing blank rows remain blank. New app records are appended with formula templates for the supported calculated columns.
 - The dashboard's expense ledger and BOQ purchase actuals are both displayed. The total actual in the dashboard follows the workbook's original formula model (materials + labour + fees + misc); the daily expense total is shown separately to avoid double counting.
 - Only project roles `owner` and `viewer` are supported. Create exactly one owner user and one viewer user in Firestore for the intended access model.
+- Structured Project Records are streamed without an arbitrary 150-record cap so totals and person balances include the full collection. Very large collections therefore use more device memory and Firestore reads; archive/export before approaching service quotas.
+- Project Records include person payment history and balance summaries, inventory movements, floor/activity progress, site diary entries, owner-only approval/reminder records, and bill images for payment entries. Workbook sheets remain compatible and unchanged.
+- Export/import of the entire Firestore project and scheduled reminder management are not currently implemented. The workbook can still be exported using the existing report/export flow; local device notifications are not a shared reminder system.
 - Before using the data for construction payments or quantities, continue to verify measurements, bills and engineer-approved quantities at site.
