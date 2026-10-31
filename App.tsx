@@ -9,6 +9,7 @@ import {
   StatusBar, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {onAuthStateChanged, signInWithEmailAndPassword, signOut, User} from 'firebase/auth';
 import {collection, doc, getDoc, onSnapshot} from 'firebase/firestore';
@@ -39,6 +40,23 @@ function dateCell(value: any) {
 
 function isDateHeader(header: string) {
   return /date|start|finish|needed|due/i.test(header || '');
+}
+
+function datePickerValue(value: any): Date {
+  const text = String(value || '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+  }
+  const parsed = new Date(text);
+  return !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+}
+
+function formatPickerDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function isMoneyHeader(header: string) {
@@ -306,6 +324,7 @@ function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDe
   const [searchText, setSearchText] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<Record<string, string>>({});
+  const [filterDateTarget, setFilterDateTarget] = useState<'dateFrom' | 'dateTo' | null>(null);
 
   if (!sheet) return <View style={{padding: 24}}><Text style={{color: C.muted}}>{language === 'ta' ? 'இந்தப் பணித்தாள் இன்னும் கிளவுடில் இல்லை. உரிமையாளர் அமைப்புகளில் இருந்து பணிப்புத்தகத்தைத் தொடங்கலாம்.' : 'This sheet is not available in the cloud yet. The owner can initialise the workbook from Settings.'}</Text></View>;
 
@@ -409,21 +428,33 @@ function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDe
           {dateIndex >= 0 ? <>
             <Text style={{fontSize: 11, color: C.muted, fontWeight: '700', marginBottom: 5}}>{t('Date range (YYYY-MM-DD)', 'தேதி வரம்பு (YYYY-MM-DD)')}</Text>
             <View style={{flexDirection: 'row', gap: 8}}>
-              <TextInput
-                value={filters.dateFrom || ''}
-                onChangeText={value => setFilters(previous => ({...previous, dateFrom: value}))}
-                placeholder={t("From date", "தொடக்க தேதி")}
-                placeholderTextColor={C.muted}
-                style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, color: C.ink, fontSize: 12}}
-              />
-              <TextInput
-                value={filters.dateTo || ''}
-                onChangeText={value => setFilters(previous => ({...previous, dateTo: value}))}
-                placeholder={t("To date", "முடிவு தேதி")}
-                placeholderTextColor={C.muted}
-                style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, color: C.ink, fontSize: 12}}
-              />
+              {(['dateFrom', 'dateTo'] as const).map(key => (
+                <TouchableOpacity
+                  key={key}
+                  onPress={() => setFilterDateTarget(key)}
+                  style={{flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 12}}
+                >
+                  <Text style={{fontSize: 12, color: filters[key] ? C.ink : C.muted}}>
+                    {filters[key] || (key === 'dateFrom' ? t('From date', 'தொடக்க தேதி') : t('To date', 'முடிவு தேதி'))}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
+            {filterDateTarget ? (
+              <DateTimePicker
+                value={datePickerValue(filters[filterDateTarget])}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(event, selectedDate) => {
+                  if (event.type === 'set' && selectedDate) {
+                    setFilters(previous => ({...previous, [filterDateTarget]: formatPickerDate(selectedDate)}));
+                  }
+                  if (Platform.OS === 'android' || event.type === 'dismissed') {
+                    setFilterDateTarget(null);
+                  }
+                }}
+              />
+            ) : null}
           </> : null}
         </View> : null}
       </> : null}
@@ -460,6 +491,7 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave, l
   const headers = headersForSheet(sheetId, sheet || {values: [[]]});
   const [values, setValues] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [datePickerIndex, setDatePickerIndex] = useState<number | null>(null);
   useEffect(() => {
     if (!visible || !sheet || rowIndex === null) return;
     setValues(headers.map((h: string, i: number) => {
@@ -597,6 +629,42 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave, l
                     );
                   }
 
+                  if (isDateHeader(h)) {
+                    return (
+                      <View>
+                        <TouchableOpacity
+                          disabled={formula}
+                          onPress={() => setDatePickerIndex(i)}
+                          style={{backgroundColor: formula ? '#E8EDE9' : C.white, borderWidth: 1, borderColor: C.line, borderRadius: 11, padding: 12, minHeight: 45, justifyContent: 'center'}}
+                        >
+                          <Text style={{color: values[i] ? (formula ? C.muted : C.ink) : '#9AA8A2', fontSize: 14}}>
+                            {values[i] || (language === 'ta' ? 'தேதியைத் தேர்ந்தெடுக்கவும்' : 'Select date')}
+                          </Text>
+                        </TouchableOpacity>
+                        {datePickerIndex === i ? (
+                          <DateTimePicker
+                            value={datePickerValue(values[i])}
+                            mode="date"
+                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                            onChange={(event, selectedDate) => {
+                              if (event.type === 'set' && selectedDate) {
+                                const formatted = formatPickerDate(selectedDate);
+                                setValues(prev => {
+                                  const next = [...prev];
+                                  next[i] = formatted;
+                                  return next;
+                                });
+                              }
+                              if (Platform.OS === 'android' || event.type === 'dismissed') {
+                                setDatePickerIndex(null);
+                              }
+                            }}
+                          />
+                        ) : null}
+                      </View>
+                    );
+                  }
+
                   return (
                     <TextInput
                       value={values[i] || ''}
@@ -604,7 +672,7 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave, l
                       editable={!formula}
                       keyboardType={isMoneyHeader(h) || /qty|complete|duration|delay|area|%/i.test(h) ? 'numeric' : 'default'}
                       multiline={/notes|scope|specification/i.test(h)}
-                      placeholder={isDateHeader(h) ? 'YYYY-MM-DD' : language === 'ta' ? `${h} உள்ளிடவும்` : `Enter ${h.toLowerCase()}`}
+                      placeholder={language === 'ta' ? `${h} உள்ளிடவும்` : `Enter ${h.toLowerCase()}`}
                       placeholderTextColor="#9AA8A2"
                       style={{backgroundColor: formula ? '#E8EDE9' : C.white, borderWidth: 1, borderColor: C.line, borderRadius: 11, padding: 12, color: formula ? C.muted : C.ink, minHeight: /notes|scope|specification/i.test(h) ? 68 : 45, textAlignVertical: 'top'}}
                     />

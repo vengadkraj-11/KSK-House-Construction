@@ -26,7 +26,8 @@
           "defaultChannel": "construction-updates"
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "eas": {
