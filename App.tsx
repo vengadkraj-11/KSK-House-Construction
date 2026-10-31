@@ -491,7 +491,7 @@ function FloorSummaryBlock({sheets, language}: any) {
   return <View style={{marginTop: 12, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 10, gap: 8}}>{values.map(item => <View key={item.floor} style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}><View style={{flex: 1}}><Text style={{fontSize: 12, color: C.ink, fontWeight: '800'}}>{item.floor}</Text><Text style={{fontSize: 10, color: C.muted, marginTop: 2}}>{t('Materials', 'பொருட்கள்')} {money(item.materials)} · {t('Labour', 'தொழிலாளர்')} {money(item.labour)}</Text></View><Text style={{fontSize: 12, color: C.ink, fontWeight: '900'}}>{money(item.total)}</Text></View>)}</View>;
 }
 
-function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave, language}: any) {
+function RowEditor({visible, sheetId, sheet, allSheets, rowIndex, isNew, onClose, onSave, language}: any) {
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   const headers = headersForSheet(sheetId, sheet || {values: [[]]});
   const [values, setValues] = useState<string[]>([]);
@@ -593,7 +593,10 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave, l
                       'Other professional fee'
                     ]
                   };
-                  const options = ['daily_expenses', 'work_schedule', 'labour_work', 'professional_fees'].includes(sheetId) ? optionsByHeader[h] : undefined;
+                  const materialOptions = [...new Set(['materials_ground','materials_first','materials_boq'].flatMap(id=>{const data=allSheets?.[id];const hs=(data?.values?.[0]||[]).map((x:any)=>String(x||''));const col=hs.findIndex((x:string)=>/material|item|description/i.test(x));return col<0?[]:(data.values||[]).slice(1).map((row:any[])=>String(row?.[col]||'').trim()).filter(Boolean);} ))];
+                  const isMaterialField = /^(material|material \/ item|item|description)$/i.test(h.trim());
+                  const dynamicOptions = /floor|area/i.test(h) ? optionsByHeader['Floor / Area'] : /stage|work stage/i.test(h) ? optionsByHeader['Work Stage'] : /^unit$/i.test(h) ? optionsByHeader.Unit : undefined;
+                  const options = (['daily_expenses', 'work_schedule', 'labour_work', 'professional_fees','materials_ground','materials_first','materials_boq'].includes(sheetId) ? optionsByHeader[h] : undefined) || (isMaterialField ? materialOptions : undefined) || dynamicOptions;
 
                   if (options) {
                     return (
@@ -630,6 +633,7 @@ function RowEditor({visible, sheetId, sheet, rowIndex, isNew, onClose, onSave, l
                             } as Record<string, string>)[option] || option : option} value={option} />
                           ))}
                         </Picker>
+                        <TextInput value={values[i]||''} onChangeText={value=>setValues(prev=>{const next=[...prev];next[i]=value;return next;})} placeholder={language==='ta'?`தனிப்பயன் ${h}`:`Custom ${h}`} editable={!formula} style={{marginHorizontal:10,marginBottom:10,borderWidth:1,borderColor:C.line,borderRadius:8,padding:9,color:C.ink}}/>
                       </View>
                     );
                   }
@@ -1504,6 +1508,6 @@ export default function App() {
   })}
 </View>
 
-    <RowEditor visible={modalVisible} sheetId={editingSheetId} sheet={sheets[editingSheetId]} rowIndex={editingRow} isNew={editingIsNew} language={language} onClose={() => setModalVisible(false)} onSave={saveEditedSheet}/>
+    <RowEditor visible={modalVisible} sheetId={editingSheetId} sheet={sheets[editingSheetId]} allSheets={sheets} rowIndex={editingRow} isNew={editingIsNew} language={language} onClose={() => setModalVisible(false)} onSave={saveEditedSheet}/>
   </SafeAreaView>;
 }

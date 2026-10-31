@@ -47,6 +47,13 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal((await request('projects/ksk/reminders/reminder1','viewer')).status,403);
   assert.equal((await request('projects/ksk/sheets/sheet1','unknown')).status,403);
 
+  const standalonePaymentPath=`projects/${project}/databases/(default)/documents/projects/ksk/payments/standalone-payment`;
+  const standalonePayment=await commit('owner',[{update:{name:standalonePaymentPath,fields:{createdBy:stringValue('owner'),amount:numberValue(25),person:stringValue('A')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
+  assert.equal(standalonePayment.status,200,await standalonePayment.text());
+  const invalidAgreementPath=standalonePaymentPath.replace('standalone-payment','invalid-agreement');
+  const invalidAgreement=await commit('owner',[{update:{name:invalidAgreementPath,fields:{createdBy:stringValue('owner'),amount:numberValue(25),person:stringValue('A'),contractId:stringValue('missing-contract')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
+  assert.equal(invalidAgreement.status,403);
+
   const deniedPayment=await request('projects/ksk/payments?documentId=viewer-write','viewer','POST',{fields:{createdBy:stringValue('viewer'),amount:numberValue(1)}});
   assert.equal(deniedPayment.status,403);
   const deniedReceipt=await request('projects/ksk/bills/payment1/images?documentId=viewer-photo','viewer','POST',{fields:{recordId:stringValue('payment1'),imageBase64:stringValue('YWJj'),fileName:stringValue('x.jpg'),mimeType:stringValue('image/jpeg'),createdBy:stringValue('owner'),createdAt:{timestampValue:new Date().toISOString()}}});

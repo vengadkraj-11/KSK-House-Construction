@@ -30,7 +30,7 @@ async function readAll(type: ProjectRecordType): Promise<ProjectRecord[]> {
 
 /** Loads in bounded pages; callers get complete data for accurate totals. */
 export function subscribeProjectRecords(type: ProjectRecordType, onChange: (items: ProjectRecord[]) => void, onError: (message: string) => void) {
-  if (!db) return () => {};
+  if (!db) { onError('Firebase is not configured. Project Records cannot be loaded.'); return () => {}; }
   let stopped = false;
   let refreshing = false;
   let refreshAgain = false;
@@ -52,7 +52,9 @@ export function subscribeProjectRecords(type: ProjectRecordType, onChange: (item
   void refresh();
   // A bounded listener detects additions and edits on the most recent page. Full
   // reload remains paginated and includes legacy records without createdAt.
-  const stop = onSnapshot(query(path(type), orderBy('updatedAt', 'desc'), limit(50)), () => { void refresh(); }, error => onError(error.message));
+  // No orderBy here: legacy documents may not have updatedAt, and Firestore
+  // excludes them from ordered queries. A bounded listener still detects edits.
+  const stop = onSnapshot(query(path(type), limit(250)), () => { void refresh(); }, error => onError(`Could not watch ${type} records: ${error.message}`));
   return () => { stopped = true; stop(); };
 }
 
@@ -72,7 +74,7 @@ function validDate(value: any, key: string) {
   if (!match || !date || date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1 || date.getDate() !== Number(match[3])) throw new Error(`${key} must be a valid YYYY-MM-DD date.`);
 }
 
-export async function addProjectRecord(type: ProjectRecordType, values: Record<string, any>, uid: string): Promise<string> {
+export async function addProjectRecord(type: ProjectRecordType, values: Record<string, any>, uid: string, existingId?: string): Promise<string> {
   if (!db) throw new Error('Firebase is not configured.');
   if (!uid) throw new Error('Sign in is required.');
   const clean = {...values};
@@ -98,9 +100,10 @@ export async function addProjectRecord(type: ProjectRecordType, values: Record<s
     if (!payload.person || !Number.isFinite(payload.agreedAmount)) throw new Error('A person and agreed amount are required for an agreement.');
   }
   if (type === 'payments') {
-    if (!clean.contractId || !clean.amount || !clean.date || !clean.person) throw new Error('Select an agreement and enter person, payment amount and date.');
+    if (!Number.isFinite(Number(clean.amount)) || Number(clean.amount) <= 0 || !clean.date || !(clean.paymentTo || clean.person)) throw new Error('Enter payment to, a positive amount and a valid date. Agreement linking is optional.');
     payload.amount = Number(clean.amount);
     payload.paymentKind = clean.paymentKind === 'advance' ? 'advance' : 'payment';
+    if (clean.paymentTo && !clean.person) payload.person = clean.paymentTo;
     delete payload.agreedAmount;
   }
   if (type === 'stock') {
@@ -109,11 +112,14 @@ export async function addProjectRecord(type: ProjectRecordType, values: Record<s
   }
 
   const batch = writeBatch(db);
-  const recordRef = doc(path(type));
+  const recordRef = existingId ? doc(path(type), existingId) : doc(path(type));
   const activityRef = doc(collection(db, 'projects', PROJECT_ID, 'activity'));
   const label = type.charAt(0).toUpperCase() + type.slice(1);
-  batch.set(recordRef, payload);
-  batch.set(activityRef, {title: `Added ${label} record`, body: `${label} record added to Project Records`, actorUid: uid, actorName: 'Project owner', sheetId: `module_${type}`, sheetName: label, changeType: 'edited', itemName: label, details: `${label} record created`, createdAt: serverTimestamp()});
+  if (existingId) {
+    const {createdAt, createdBy, ...changes} = payload;
+    batch.update(recordRef, {...changes, updatedBy:uid});
+  } else batch.set(recordRef, payload);
+  batch.set(activityRef, {title: `${existingId?'Updated':'Added'} ${label} record`, body: `${label} record ${existingId?'updated':'added'} in Project Records`, actorUid: uid, actorName: 'Project owner', sheetId: `module_${type}`, sheetName: label, changeType: 'edited', itemName: label, details: `${label} record ${existingId?'updated':'created'}`, createdAt: serverTimestamp()});
   await batch.commit();
   return recordRef.id;
 }

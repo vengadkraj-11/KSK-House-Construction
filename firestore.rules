@@ -14,6 +14,13 @@ service cloud.firestore {
     function isOwner(projectId) {
       return signedIn() && memberRole(projectId) == 'owner';
     }
+    function validPaymentAgreement(projectId) {
+      return !request.resource.data.keys().hasAny(['contractId'])
+        || request.resource.data.contractId == ''
+        || (request.resource.data.contractId is string
+          && exists(/databases/$(database)/documents/projects/$(projectId)/contracts/$(request.resource.data.contractId))
+          && get(/databases/$(database)/documents/projects/$(projectId)/contracts/$(request.resource.data.contractId)).data.person == request.resource.data.person);
+    }
 
     // Role documents are provisioned by the project administrator only.
     match /users/{userId} {
@@ -73,8 +80,10 @@ service cloud.firestore {
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.createdAt == request.time
         && request.resource.data.amount is number
-        && request.resource.data.amount >= 0;
-      allow update, delete: if isOwner(projectId);
+        && request.resource.data.amount >= 0
+        && validPaymentAgreement(projectId);
+      allow update: if isOwner(projectId) && validPaymentAgreement(projectId);
+      allow delete: if isOwner(projectId);
     }
     match /projects/{projectId}/contracts/{recordId} {
       allow read: if hasProjectAccess(projectId);
