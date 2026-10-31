@@ -171,6 +171,7 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
         setDeletingPaymentId(payment.id);
         try {
           await deletePaymentRecord(payment, uid);
+          setRecords(old=>({...old,payments:(old.payments||[]).filter(item=>item.id!==payment.id)}));
           Alert.alert('Payment deleted', `${paymentLabel} was deleted.`);
         } catch (error: any) {
           Alert.alert('Could not delete payment', error?.message || 'Check your connection and try again.');
