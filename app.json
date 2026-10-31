@@ -5,7 +5,6 @@
     "scheme": "kskhouse",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
     "android": {
       "package": "com.ksk.houseconstruction",
       "versionCode": 1,

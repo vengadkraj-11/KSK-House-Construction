@@ -8,6 +8,8 @@
     "android": "expo run:android",
     "prebuild": "expo prebuild",
     "typecheck": "tsc --noEmit",
+    "test": "node --test tests/recordMath.test.cjs tests/projectBackupValidation.test.cjs",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-ksk \"node --test tests/firestoreRules.test.cjs\"",
     "build:preview": "eas build --platform android --profile preview",
     "build:production": "eas build --platform android --profile production"
   },

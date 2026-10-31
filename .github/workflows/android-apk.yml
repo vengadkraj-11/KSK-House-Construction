@@ -13,7 +13,6 @@ jobs:
       EXPO_PUBLIC_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
       EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
       EXPO_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-      EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
       EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
       EXPO_PUBLIC_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
 
@@ -36,13 +35,24 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools
+          packages: |
+            platform-tools
+            platforms;android-36
+            build-tools;35.0.0
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Check Firebase app configuration
+        run: |
+          test -n "$EXPO_PUBLIC_FIREBASE_API_KEY" || { echo "::error::Missing FIREBASE_API_KEY"; exit 1; }
+          test -n "$EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN" || { echo "::error::Missing FIREBASE_AUTH_DOMAIN"; exit 1; }
+          test -n "$EXPO_PUBLIC_FIREBASE_PROJECT_ID" || { echo "::error::Missing FIREBASE_PROJECT_ID"; exit 1; }
+          test -n "$EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" || { echo "::error::Missing FIREBASE_MESSAGING_SENDER_ID"; exit 1; }
+          test -n "$EXPO_PUBLIC_FIREBASE_APP_ID" || { echo "::error::Missing FIREBASE_APP_ID"; exit 1; }
+
       - name: Generate Android project
-        run: npx expo prebuild --platform android --no-install --non-interactive
+        run: CI=1 npx expo prebuild --platform android --no-install
 
       - name: Build APK
         working-directory: android

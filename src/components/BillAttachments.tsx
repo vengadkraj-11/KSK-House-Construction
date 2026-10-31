@@ -24,11 +24,12 @@ type BillImage = {
 };
 
 export default function BillAttachments({
-  recordId, canEdit, language
+  recordId, canEdit, language, collectionName = 'bills'
 }: {
   recordId: string;
   canEdit: boolean;
   language: string;
+  collectionName?: 'bills' | 'attachments';
 }) {
   const [visible, setVisible] = useState(false);
   const [items, setItems] = useState<BillImage[]>([]);
@@ -38,6 +39,9 @@ export default function BillAttachments({
   const [selected, setSelected] = useState<BillImage | null>(null);
 
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
+  const photoMode=collectionName==='attachments';
+  const label=photoMode?t('photo','படம்'):t('receipt','ரசீது');
+  const title=photoMode?t('Site photos','தளப் புகைப்படங்கள்'):t('Bills / receipts','பில்கள் / ரசீதுகள்');
 
   // Subscribe only while this expense's receipt window is open.
   useEffect(() => {
@@ -45,13 +49,13 @@ export default function BillAttachments({
 
     setLoading(true);
     const imagesPath = collection(
-      db, 'projects', PROJECT_ID, 'bills', recordId, 'images'
+      db, 'projects', PROJECT_ID, collectionName, recordId, 'images'
     );
 
     const stop = onSnapshot(imagesPath, snapshot => {
       const next = snapshot.docs.map(d => ({
-        id: d.id,
-        ...d.data()
+        ...d.data(),
+        id: d.id
       } as BillImage));
 
       next.sort((a, b) =>
@@ -70,7 +74,7 @@ export default function BillAttachments({
     });
 
     return stop;
-  }, [visible, recordId]);
+  }, [visible, recordId, collectionName]);
 
   const chooseImage = async (camera: boolean, replaceItem?: BillImage) => {
     if (!canEdit || !db) return;
@@ -83,7 +87,7 @@ export default function BillAttachments({
         if (!permission.granted) {
           Alert.alert(
             t('Camera permission', 'கேமரா அனுமதி'),
-            t('Allow camera access to take a receipt photo.', 'ரசீது புகைப்படம் எடுக்க கேமரா அனுமதி வழங்கவும்.')
+            t(`Allow camera access to take a ${label}.`, 'புகைப்படம் எடுக்க கேமரா அனுமதி வழங்கவும்.')
           );
           return;
         }
@@ -97,7 +101,7 @@ export default function BillAttachments({
         if (!permission.granted) {
           Alert.alert(
             t('Gallery permission', 'கேலரி அனுமதி'),
-            t('Allow photo library access to select a receipt.', 'ரசீதைத் தேர்ந்தெடுக்க புகைப்பட அனுமதி வழங்கவும்.')
+            t(`Allow photo library access to select a ${label}.`, 'புகைப்படத்தைத் தேர்ந்தெடுக்க அனுமதி வழங்கவும்.')
           );
           return;
         }
@@ -142,9 +146,9 @@ export default function BillAttachments({
       }
 
       const imagesPath = collection(
-        db, 'projects', PROJECT_ID, 'bills', recordId, 'images'
+        db, 'projects', PROJECT_ID, collectionName, recordId, 'images'
       );
-      const fileName = `receipt-${Date.now()}.jpg`;
+      const fileName = `${photoMode?'site-photo':'receipt'}-${Date.now()}.jpg`;
 
       if (replaceItem) {
         await updateDoc(doc(imagesPath, replaceItem.id), {
@@ -154,8 +158,8 @@ export default function BillAttachments({
         });
         setSelected(null);
         Alert.alert(
-          t('Receipt updated', 'ரசீது புதுப்பிக்கப்பட்டது'),
-          t('The replacement receipt is available to project members.', 'மாற்றிய ரசீது திட்ட உறுப்பினர்களுக்குக் கிடைக்கும்.')
+          t(photoMode?'Photo updated':'Receipt updated', photoMode?'புகைப்படம் புதுப்பிக்கப்பட்டது':'ரசீது புதுப்பிக்கப்பட்டது'),
+          t('The replacement image is available to project members.', 'மாற்றிய படம் திட்ட உறுப்பினர்களுக்குக் கிடைக்கும்.')
         );
       } else {
         await addDoc(imagesPath, {
@@ -167,8 +171,8 @@ export default function BillAttachments({
           createdAt: serverTimestamp()
         });
         Alert.alert(
-          t('Receipt attached', 'ரசீது இணைக்கப்பட்டது'),
-          t('The receipt is now available to project members.', 'இந்த ரசீதை திட்ட உறுப்பினர்கள் இப்போது பார்க்கலாம்.')
+          t(photoMode?'Photo attached':'Receipt attached', photoMode?'புகைப்படம் இணைக்கப்பட்டது':'ரசீது இணைக்கப்பட்டது'),
+          t('The image is now available to project members.', 'இந்தப் படத்தை திட்ட உறுப்பினர்கள் இப்போது பார்க்கலாம்.')
         );
       }
     } catch (error: any) {
@@ -185,7 +189,7 @@ export default function BillAttachments({
     if (!item.imageBase64 || !FileSystem.cacheDirectory) {
       Alert.alert(
         t('Download unavailable', 'பதிவிறக்கம் கிடைக்கவில்லை'),
-        t('The receipt could not be prepared for download.', 'பதிவிறக்க ரசீதைத் தயாரிக்க முடியவில்லை.')
+        t(`The ${label} could not be prepared for download.`, 'பதிவிறக்கப் படத்தைத் தயாரிக்க முடியவில்லை.')
       );
       return;
     }
@@ -210,7 +214,7 @@ export default function BillAttachments({
 
       await Sharing.shareAsync(fileUri, {
         mimeType: 'image/jpeg',
-        dialogTitle: t('Save or share receipt', 'ரசீதைச் சேமிக்கவும் அல்லது பகிரவும்')
+        dialogTitle: photoMode?t('Save or share photo','புகைப்படத்தைச் சேமிக்கவும் அல்லது பகிரவும்'):t('Save or share receipt', 'ரசீதைச் சேமிக்கவும் அல்லது பகிரவும்')
       });
     } catch (error: any) {
       Alert.alert(
@@ -226,8 +230,8 @@ export default function BillAttachments({
     if (!canEdit || !db) return;
 
     Alert.alert(
-      t('Delete receipt?', 'ரசீதை நீக்கவா?'),
-      t('This image will be permanently deleted.', 'இந்தப் படம் நிரந்தரமாக நீக்கப்படும்.'),
+      photoMode?t('Delete photo?','புகைப்படத்தை நீக்கவா?'):t('Delete receipt?', 'ரசீதை நீக்கவா?'),
+      t(`This ${label} image will be permanently deleted.`, 'இந்தப் படம் நிரந்தரமாக நீக்கப்படும்.'),
       [
         {text: t('Cancel', 'ரத்து'), style: 'cancel'},
         {
@@ -236,7 +240,7 @@ export default function BillAttachments({
           onPress: async () => {
             try {
               await deleteDoc(doc(
-                db!, 'projects', PROJECT_ID, 'bills',
+                db!, 'projects', PROJECT_ID, collectionName,
                 recordId, 'images', item.id
               ));
               if (selected?.id === item.id) setSelected(null);
@@ -258,7 +262,7 @@ export default function BillAttachments({
         onPress={() => setVisible(true)}
         style={{alignSelf: 'flex-start', paddingHorizontal: 11, paddingVertical: 8, borderRadius: 9, backgroundColor: '#EAF0F7'}}>
         <Text style={{fontSize: 11, color: '#365775', fontWeight: '800'}}>
-          {t('Bills / receipts', 'பில்கள் / ரசீதுகள்')}
+          {title}
         </Text>
       </TouchableOpacity>
 
@@ -272,7 +276,7 @@ export default function BillAttachments({
         <View style={{flex: 1, backgroundColor: '#F7F9F8', padding: 18, paddingTop: 42}}>
           <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
             <Text style={{fontSize: 18, color: '#20352F', fontWeight: '800'}}>
-              {t('Bills / receipts', 'பில்கள் / ரசீதுகள்')}
+              {title}
             </Text>
             <TouchableOpacity onPress={() => setVisible(false)} style={{padding: 9}}>
               <Text style={{fontSize: 13, color: '#365775', fontWeight: '800'}}>
@@ -322,7 +326,7 @@ export default function BillAttachments({
               {items.map(item => (
                 <View key={item.id} style={{padding: 12, backgroundColor: '#FFFFFF', borderRadius: 11, borderWidth: 1, borderColor: '#E2E9E5'}}>
                   <Text style={{fontSize: 12, color: '#365775', fontWeight: '700', marginBottom: 9}}>
-                    {item.fileName || t('Receipt image', 'ரசீது படம்')}
+                    {item.fileName || (photoMode?t('Site photo','தளப் புகைப்படம்'):t('Receipt image', 'ரசீது படம்'))}
                   </Text>
 
                   <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 7}}>

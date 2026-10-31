@@ -31,60 +31,58 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Receipt images are stored as compressed Base64 in Firestore.
-    // Members can view them; only the project owner can upload or delete them.
-    match /projects/{projectId}/bills/{recordId}/images/{imageId} {
-      allow read: if hasProjectAccess(projectId);
-
-      allow create: if isOwner(projectId)
-        && request.resource.data.keys().hasAll([
-          'recordId', 'imageBase64', 'fileName',
-          'mimeType', 'createdBy', 'createdAt'
-        ])
-        && request.resource.data.keys().hasOnly([
-          'recordId', 'imageBase64', 'fileName',
-          'mimeType', 'createdBy', 'createdAt'
-        ])
+    // All project members can view receipt and diary photos. Only owners can write.
+    match /projects/{projectId}/{attachmentGroup}/{recordId}/images/{imageId} {
+      allow read: if attachmentGroup in ['bills', 'attachments'] && hasProjectAccess(projectId);
+      allow create: if attachmentGroup in ['bills', 'attachments'] && isOwner(projectId)
+        && request.resource.data.keys().hasAll(['recordId', 'imageBase64', 'fileName', 'mimeType', 'createdBy', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['recordId', 'imageBase64', 'fileName', 'mimeType', 'createdBy', 'createdAt', 'restoredCreatedAt'])
         && request.resource.data.recordId == recordId
         && request.resource.data.imageBase64 is string
+        && request.resource.data.imageBase64.size() > 0
         && request.resource.data.imageBase64.size() <= 450000
         && request.resource.data.fileName is string
+        && request.resource.data.fileName.size() <= 200
         && request.resource.data.mimeType == 'image/jpeg'
         && request.resource.data.createdBy == 'owner'
-        && request.resource.data.createdAt == request.time;
-
-      allow update: if isOwner(projectId)
-        && request.resource.data.keys().hasAll([
-          'recordId', 'imageBase64', 'fileName',
-          'mimeType', 'createdBy', 'createdAt'
-        ])
-        && request.resource.data.keys().hasOnly([
-          'recordId', 'imageBase64', 'fileName',
-          'mimeType', 'createdBy', 'createdAt'
-        ])
+        && request.resource.data.createdAt == request.time
+        && (!request.resource.data.keys().hasAny(['restoredCreatedAt']) || request.resource.data.restoredCreatedAt is timestamp);
+      allow update: if attachmentGroup in ['bills', 'attachments'] && isOwner(projectId)
+        && request.resource.data.keys().hasAll(['recordId', 'imageBase64', 'fileName', 'mimeType', 'createdBy', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['recordId', 'imageBase64', 'fileName', 'mimeType', 'createdBy', 'createdAt', 'restoredCreatedAt'])
         && request.resource.data.recordId == recordId
         && request.resource.data.recordId == resource.data.recordId
         && request.resource.data.imageBase64 is string
+        && request.resource.data.imageBase64.size() > 0
         && request.resource.data.imageBase64.size() <= 450000
         && request.resource.data.fileName is string
+        && request.resource.data.fileName.size() <= 200
         && request.resource.data.mimeType == 'image/jpeg'
         && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt;
-
-      allow delete: if isOwner(projectId);
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (!request.resource.data.keys().hasAny(['restoredCreatedAt']) || request.resource.data.restoredCreatedAt is timestamp);
+      allow delete: if attachmentGroup in ['bills', 'attachments'] && isOwner(projectId);
     }
-
 
     // Structured project modules: all project members may read; only the
     // project owner may create or change records. Records are kept separate
     // from the original Excel-style worksheets.
     match /projects/{projectId}/payments/{recordId} {
-      allow read: if isOwner(projectId);
+      allow read: if hasProjectAccess(projectId);
       allow create: if isOwner(projectId)
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.createdAt == request.time
         && request.resource.data.amount is number
         && request.resource.data.amount >= 0;
+      allow update, delete: if isOwner(projectId);
+    }
+    match /projects/{projectId}/contracts/{recordId} {
+      allow read: if hasProjectAccess(projectId);
+      allow create: if isOwner(projectId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.agreedAmount is number
+        && request.resource.data.agreedAmount >= 0;
       allow update, delete: if isOwner(projectId);
     }
     match /projects/{projectId}/stock/{recordId} {
@@ -117,8 +115,34 @@ service cloud.firestore {
       allow read: if isOwner(projectId);
       allow create: if isOwner(projectId)
         && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time;
-      allow update, delete: if isOwner(projectId);
+        && request.resource.data.createdAt == request.time
+        && (request.resource.data.status == 'pending'
+          || (request.resource.data.status in ['approved', 'rejected']
+            && request.resource.data.backupSchemaVersion == 1
+            && request.resource.data.restoredFromBackupAt is string
+            && request.resource.data.history is list
+            && request.resource.data.history.size() > 0
+            && request.resource.data.decidedBy is string
+            && request.resource.data.decidedAt is timestamp
+            && request.resource.data.history[request.resource.data.history.size() - 1].status == request.resource.data.status
+            && request.resource.data.history[request.resource.data.history.size() - 1].actorUid == request.resource.data.decidedBy
+            && request.resource.data.history[request.resource.data.history.size() - 1].decidedAt is timestamp));
+      allow update: if isOwner(projectId)
+        && resource.data.status in ['pending', 'Pending', 'PENDING']
+        && request.resource.data.status in ['approved', 'rejected']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedBy', 'decidedAt', 'decisionNote', 'updatedAt', 'history'])
+        && request.resource.data.decidedBy == request.auth.uid
+        && request.resource.data.decidedAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.decisionNote is string
+        && request.resource.data.decisionNote.size() <= 2000
+        && request.resource.data.history is list
+        && request.resource.data.history.size() == resource.data.get('history', []).size() + 1
+        && request.resource.data.history[request.resource.data.history.size() - 1].actorUid == request.auth.uid
+        && request.resource.data.history[request.resource.data.history.size() - 1].status == request.resource.data.status
+        && request.resource.data.history[request.resource.data.history.size() - 1].note == request.resource.data.decisionNote
+        && request.resource.data.history[request.resource.data.history.size() - 1].decidedAt is timestamp;
+      allow delete: if false;
     }
     match /projects/{projectId}/reminders/{recordId} {
       allow read: if isOwner(projectId);
