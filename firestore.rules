@@ -74,6 +74,60 @@ service cloud.firestore {
       allow delete: if isOwner(projectId);
     }
 
+
+    // Structured project modules: all project members may read; only the
+    // project owner may create or change records. Records are kept separate
+    // from the original Excel-style worksheets.
+    match /projects/{projectId}/payments/{recordId} {
+      allow read: if isOwner(projectId);
+      allow create: if isOwner(projectId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.amount is number
+        && request.resource.data.amount >= 0;
+      allow update, delete: if isOwner(projectId);
+    }
+    match /projects/{projectId}/stock/{recordId} {
+      allow read: if hasProjectAccess(projectId);
+      allow create: if isOwner(projectId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity >= 0;
+      allow update, delete: if isOwner(projectId);
+    }
+    match /projects/{projectId}/progress/{recordId} {
+      allow read: if hasProjectAccess(projectId);
+      allow create: if isOwner(projectId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.percent is number
+        && request.resource.data.percent >= 0
+        && request.resource.data.percent <= 100;
+      allow update, delete: if isOwner(projectId);
+    }
+    match /projects/{projectId}/diary/{recordId} {
+      allow read: if hasProjectAccess(projectId);
+      allow create: if isOwner(projectId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if isOwner(projectId);
+    }
+    match /projects/{projectId}/approvals/{recordId} {
+      allow read: if isOwner(projectId);
+      allow create: if isOwner(projectId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if isOwner(projectId);
+    }
+    match /projects/{projectId}/reminders/{recordId} {
+      allow read: if isOwner(projectId);
+      allow create: if isOwner(projectId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if isOwner(projectId);
+    }
+
     match /projects/{projectId}/activity/{activityId} {
       allow read: if hasProjectAccess(projectId);
 

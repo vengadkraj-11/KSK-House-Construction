@@ -20,6 +20,7 @@ import {calculateDashboard, calculateFloorSummary, countMaterials} from './src/s
 import {enableNotifications, showActivityNotification} from './src/services/notifications';
 import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuoteSheet, ensureSheetRecordIds, clearActivityHistory} from './src/services/projectSync';
 import {ActivityItem, Role, SheetDocument, SheetMap} from './src/types';
+import ProjectRecords from './src/components/ProjectRecords';
 
 const C = {
   ink: '#17302D', muted: '#6F817C', green: '#1C6255', green2: '#E6F1EC',
@@ -239,29 +240,29 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, l
 
     <View style={cardStyle({marginBottom: 14})}>
       <SectionTitle title={t('Quick actions', 'விரைவான செயல்கள்')} />
-      <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 9}}>
-        <TouchableOpacity onPress={onAddExpense} style={{...buttonStyle(role !== 'owner'), flex: 1, minWidth: 125, opacity: role === 'owner' ? 1 : 0.55}}>
+      <View style={{flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 9}}>
+        <TouchableOpacity onPress={onAddExpense} style={{...buttonStyle(role !== 'owner'), width: '48%', minHeight: 46, opacity: role === 'owner' ? 1 : 0.55}}>
           <Text style={{fontWeight: '800', color: '#FFF'}}>＋ {t('Add expense', 'செலவைச் சேர்')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => onOpen('materials_boq')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}>
+        <TouchableOpacity onPress={() => onOpen('materials_boq')} style={{...buttonStyle(false, true), width: '48%', minHeight: 46}}>
           <Text style={{fontWeight: '800', color: C.green}}>▤ {t('Materials', 'பொருட்கள்')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => onOpen('labour_work')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}>
+        <TouchableOpacity onPress={() => onOpen('labour_work')} style={{...buttonStyle(false, true), width: '48%', minHeight: 46}}>
           <Text style={{fontWeight: '800', color: C.green}}>♧ {t('Labour', 'தொழிலாளர்கள்')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => onOpen('professional_fees')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}>
+        <TouchableOpacity onPress={() => onOpen('professional_fees')} style={{...buttonStyle(false, true), width: '48%', minHeight: 46}}>
           <Text style={{fontWeight: '800', color: C.green}}>▣ {t('Professional fees', 'தொழில்முறை கட்டணங்கள்')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => onOpen('work_schedule')} style={{...buttonStyle(false, true), flex: 1, minWidth: 125}}>
+        <TouchableOpacity onPress={() => onOpen('work_schedule')} style={{...buttonStyle(false, true), width: '48%', minHeight: 46}}>
           <Text style={{fontWeight: '800', color: C.green}}>◷ {t('Work progress', 'வேலை முன்னேற்றம்')}</Text>
         </TouchableOpacity>
       </View>
     </View>
 
-    <View style={cardStyle()}>
+    <View style={cardStyle({marginBottom: 14, paddingVertical: 13})}>
       <SectionTitle title={t('Recent project updates', 'சமீபத்திய திட்டப் புதுப்பிப்புகள்')} />
-      {activities.length ? activities.slice(0, 4).map((item: ActivityItem) => <View key={item.id} style={{paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.line}}>
-        <Text style={{fontSize: 13, fontWeight: '800', color: C.ink}}>{item.title || t('Project updated', 'திட்டம் புதுப்பிக்கப்பட்டது')}</Text>
+      {activities.length ? activities.slice(0, 3).map((item: ActivityItem) => <View key={item.id} style={{paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.line}}>
+        <Text style={{fontSize: 12, fontWeight: '800', color: C.ink}}>{item.title || t('Project updated', 'திட்டம் புதுப்பிக்கப்பட்டது')}</Text>
         <Text style={{fontSize: 11, color: C.muted, marginTop: 3}}>{item.body || t('Workbook data changed', 'பணிப்புத்தகத் தரவு மாற்றப்பட்டது')}</Text>
       </View>) : <Text style={{fontSize: 12, color: C.muted}}>{t('Updates will appear here after cloud sync is connected.', 'கிளவுட் ஒத்திசைப்பு இணைக்கப்பட்டதும் புதுப்பிப்புகள் இங்கே தோன்றும்.')}</Text>}
     </View>
@@ -950,7 +951,7 @@ export default function App() {
   const [cloudCount, setCloudCount] = useState(0);
   const [syncState, setSyncState] = useState('LOCAL PREVIEW');
   const [activities, setActivities] = useState<ActivityItem[]>([]);
-  const [screen, setScreen] = useState<'Dashboard'|'Sheets'|'Expenses'|'Progress'|'Activity'|'Settings'>('Dashboard');
+  const [screen, setScreen] = useState<'Dashboard'|'Sheets'|'Expenses'|'Progress'|'Records'|'Activity'|'Settings'>('Dashboard');
   const [selectedSheet, setSelectedSheet] = useState('');
   const [editingRow, setEditingRow] = useState<number | null>(null);
   const [editingSheetId, setEditingSheetId] = useState('');
@@ -1408,7 +1409,7 @@ export default function App() {
               : SHEET_TITLES[selectedSheet])
           : (language === 'ta' ? 'திட்டப் பணித்தாள்கள்' : 'Project worksheets'))
       : language === 'ta'
-        ? ({Expenses: 'தினசரி செலவுகள்', Progress: 'வேலை முன்னேற்றம்', Activity: 'செயல்பாட்டு பதிவு', Settings: 'அமைப்புகள்'} as Record<string, string>)[screen] || screen
+        ? ({Expenses: 'தினசரி செலவுகள்', Progress: 'வேலை முன்னேற்றம்', Records: 'திட்டப் பதிவுகள்', Activity: 'செயல்பாட்டு பதிவு', Settings: 'அமைப்புகள்'} as Record<string, string>)[screen] || screen
         : screen;
 
   const renderScreen = () => {
@@ -1422,6 +1423,7 @@ export default function App() {
     }
     if (screen === 'Expenses') return <View style={{flex:1}}><SheetView sheetId="daily_expenses" sheet={sheets.daily_expenses} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('daily_expenses', index)} onAdd={() => startAdd('daily_expenses')} onDelete={(index: number) => deleteRecord('daily_expenses', index)} /></View>;
     if (screen === 'Progress') return <View style={{flex:1}}><SheetView sheetId="work_schedule" sheet={sheets.work_schedule} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('work_schedule', index)} onAdd={() => startAdd('work_schedule')} onDelete={(index: number) => deleteRecord('work_schedule', index)} /></View>;
+    if (screen === 'Records') return user && !demoMode ? <ProjectRecords uid={user.uid} owner={canEdit} /> : <View style={{padding:20}}><Text style={{color:C.muted}}>Sign in to use synced project records.</Text></View>;
     if (screen === 'Activity') return <ActivityScreen activities={activities} language={language} canClear={canEdit} onClear={handleClearActivity}/>;
     return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} language={language} onLanguageChange={changeLanguage} onExportExcel={exportExcel} onExportPdf={exportPdf}/>;
   };
@@ -1446,6 +1448,7 @@ export default function App() {
     ['Sheets','⚙','Project Setup','project_setup'],
     ['Expenses','₹','Daily Expenses','daily_expenses'],
     ['Sheets','▦','Floor Summary','floor_summary'],
+    ['Records','▤','Project Records',''],
     ['Activity','◷','Activity',''],
     ['Settings','☰','Settings','']
   ].map(([id,icon,label,sheetId]) => {
@@ -1488,6 +1491,7 @@ export default function App() {
                 'Daily Expenses':'தினசரி செலவுகள்',
                 'Floor Summary':'தளச் சுருக்கம்',
                 Activity:'செயல்பாடு',
+                'Project Records':'திட்டப் பதிவுகள்',
                 Settings:'அமைப்புகள்'
               } as Record<string,string>)[label] || label
             : label}
