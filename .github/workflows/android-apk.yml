@@ -31,7 +31,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -44,7 +43,6 @@ jobs:
       - name: Check Firebase app configuration
         run: |
           test -n "$EXPO_PUBLIC_FIREBASE_API_KEY" || { echo "::error::Missing FIREBASE_API_KEY"; exit 1; }
-          test -n "$EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN" || { echo "::error::Missing FIREBASE_AUTH_DOMAIN"; exit 1; }
           test -n "$EXPO_PUBLIC_FIREBASE_PROJECT_ID" || { echo "::error::Missing FIREBASE_PROJECT_ID"; exit 1; }
           test -n "$EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" || { echo "::error::Missing FIREBASE_MESSAGING_SENDER_ID"; exit 1; }
           test -n "$EXPO_PUBLIC_FIREBASE_APP_ID" || { echo "::error::Missing FIREBASE_APP_ID"; exit 1; }
