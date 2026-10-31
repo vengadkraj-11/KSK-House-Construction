@@ -95,16 +95,39 @@ export async function seedWorkbook(uid: string) {
 export async function saveSheet(
   id: string,
   sheet: SheetDocument,
-  uid: string
+  uid: string,
+  actorName = 'Project owner'
 ) {
   if (!db) throw new Error('Firebase is not configured.');
 
-  await setDoc(sheetPath(id), {
+  const sheetName = (sheet as any).name || id;
+  const batch = writeBatch(db);
+
+  batch.set(sheetPath(id), {
     ...encodeSheet(sheet),
     updatedAt: serverTimestamp(),
     updatedBy: uid,
     schemaVersion: 1
   });
+
+  const activityRef = doc(
+    collection(db, 'projects', PROJECT_ID, 'activity')
+  );
+
+  batch.set(activityRef, {
+    title: `UPDATE: ${sheetName}`,
+    body: `${sheetName} — Worksheet updated`,
+    actorUid: uid,
+    actorName,
+    sheetId: id,
+    sheetName,
+    changeType: 'edited',
+    itemName: sheetName,
+    details: 'Worksheet updated',
+    createdAt: serverTimestamp()
+  });
+
+  await batch.commit();
 }
 
 export async function ensureQuoteSheet(uid: string) {

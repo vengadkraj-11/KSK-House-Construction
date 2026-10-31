@@ -33,7 +33,28 @@ service cloud.firestore {
 
     match /projects/{projectId}/activity/{activityId} {
       allow read: if hasProjectAccess(projectId);
-      allow write: if false;
+
+      // Only the project owner can create activity records.
+      // The actor UID and server timestamp must match the authenticated request.
+      allow create: if isOwner(projectId)
+        && request.resource.data.keys().hasAll([
+          'actorUid', 'changeType', 'createdAt',
+          'sheetId', 'sheetName', 'title', 'body'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'actorUid', 'actorName', 'changeType', 'createdAt',
+          'sheetId', 'sheetName', 'title', 'body',
+          'itemName', 'details'
+        ])
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.changeType == 'edited'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.sheetId is string
+        && request.resource.data.sheetName is string
+        && request.resource.data.title is string
+        && request.resource.data.body is string;
+
+      allow update, delete: if false;
     }
   }
 }

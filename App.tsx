@@ -15,7 +15,7 @@ import {collection, doc, getDoc, onSnapshot} from 'firebase/firestore';
 import {auth, db, isFirebaseConfigured} from './src/firebase';
 import {LOCAL_WORKBOOK, SHEET_ORDER, SHEET_TITLES, ICONS, headersForSheet, meaningfulRows, displayCell, excelSerialToDate, dateToExcelSerial} from './src/data';
 import {calculateDashboard, calculateFloorSummary, countMaterials} from './src/services/calculations';
-import {enableNotifications} from './src/services/notifications';
+import {enableNotifications, showActivityNotification} from './src/services/notifications';
 import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuoteSheet} from './src/services/projectSync';
 import {ActivityItem, Role, SheetDocument, SheetMap} from './src/types';
 
@@ -790,7 +790,7 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
     </View>
     <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>{t('Notifications', 'அறிவிப்புகள்')}</Text>
-      <Text style={{fontSize: 12, color: C.muted, lineHeight: 18, marginTop: 5}}>{t('Register this phone to receive an Android notification when the owner changes a worksheet.', 'உரிமையாளர் பணித்தாளை மாற்றும்போது Android அறிவிப்பைப் பெற இந்தத் தொலைபேசியைப் பதிவு செய்யவும்.')}</Text>
+      <Text style={{fontSize: 12, color: C.muted, lineHeight: 18, marginTop: 5}}>{t('Enable local notifications for project updates received while this app is active.', 'செயலி திறந்திருக்கும் போது திட்டப் புதுப்பிப்புகளுக்கான உள்ளூர் அறிவிப்புகளைப் பெறவும்.')}</Text>
       <TouchableOpacity onPress={onNotifications} style={{...buttonStyle(false, true), marginTop: 13}}><Text style={{color: C.green, fontWeight: '800'}}>{t('Enable this device', 'இந்தச் சாதனத்தைச் செயல்படுத்தவும்')}</Text></TouchableOpacity>
     </View>
     <TouchableOpacity onPress={onSignOut} style={{...buttonStyle(false, true), marginTop: 3}}><Text style={{color: C.red, fontWeight: '800'}}>{t('Sign out', 'வெளியேறு')}</Text></TouchableOpacity>
@@ -868,7 +868,33 @@ export default function App() {
       setSheets(current => ({...current, ...remote}));
       setSyncState('LIVE SYNC');
     }, () => setSyncState('SYNC ERROR'));
-    const stopActivity = subscribeActivities(setActivities, () => {});
+    // Ignore the initial activity snapshot to avoid notifying old updates.
+    let activityBaselineLoaded = false;
+    const seenActivityIds = new Set<string>();
+
+    const stopActivity = subscribeActivities(items => {
+      setActivities(items);
+
+      if (!activityBaselineLoaded) {
+        items.forEach(item => seenActivityIds.add(item.id));
+        activityBaselineLoaded = true;
+        return;
+      }
+
+      const newItems = items.filter(item => !seenActivityIds.has(item.id));
+      items.forEach(item => seenActivityIds.add(item.id));
+
+      // Only viewer devices receive local alerts for owner-created activity.
+      if (role === 'viewer') {
+        newItems.slice(0, 3).reverse().forEach(item => {
+          void showActivityNotification(
+            item.title || 'KSK House updated',
+            item.body || 'A project worksheet was updated.'
+          );
+        });
+      }
+    }, () => {});
+
     return () => {stopSheets(); stopActivity();};
   }, [user, role]);
 
@@ -916,7 +942,7 @@ export default function App() {
     if (role !== 'owner') throw new Error('This account is read-only.');
     if (demoMode || !user || !db) throw new Error('Cloud sync is not connected. Changes have not been saved.');
     setSyncState('SAVING');
-    await saveSheet(editingSheetId, next, user.uid);
+    await saveSheet(editingSheetId, next, user.uid, user.displayName || user.email || 'Project owner');
     setSheets(current => ({...current, [editingSheetId]: next}));
     setSyncState('LIVE SYNC');
   };
@@ -963,7 +989,7 @@ export default function App() {
 
             try {
               setSyncState('SAVING');
-              await saveSheet(sheetId, next, user.uid);
+              await saveSheet(sheetId, next, user.uid, user.displayName || user.email || 'Project owner');
               setSheets(previous => ({...previous, [sheetId]: next}));
               setSyncState('LIVE SYNC');
               Alert.alert('Deleted', 'The record has been deleted successfully.');
