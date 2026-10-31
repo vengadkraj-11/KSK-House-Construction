@@ -4,7 +4,7 @@ import {Picker} from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import {addProjectRecord, cancelReminderRecord, dateLabel, decideApproval, newProjectRecordId, ProjectRecord, ProjectRecordType, setReminderDate, subscribeProjectRecords} from '../services/projectRecords';
+import {addProjectRecord, cancelReminderRecord, dateLabel, decideApproval, deletePaymentRecord, newProjectRecordId, ProjectRecord, ProjectRecordType, setReminderDate, subscribeProjectRecords} from '../services/projectRecords';
 import BillAttachments from './BillAttachments';
 import {cancelLocalReminder, reconcileLocalReminders, scheduleLocalReminder} from '../services/notifications';
 import {exportProjectBackup, importProjectBackup} from '../services/projectBackup';
@@ -63,6 +63,8 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef=useRef(false);
+  const deletingPaymentRef=useRef<string|null>(null);
+  const [deletingPaymentId,setDeletingPaymentId]=useState<string|null>(null);
   const [values, setValues] = useState<Record<string,string>>({});
   const [editingId, setEditingId] = useState<string | undefined>();
   const [pendingCreateId, setPendingCreateId] = useState<string | undefined>();
@@ -150,6 +152,36 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
     finally { setDeciding(null); }
   };
 
+  const confirmDeletePayment = (payment: ProjectRecord) => {
+    if (!owner || deletingPaymentRef.current) return;
+    const paymentLabel = payment.paymentId || payment.id;
+    const details = [
+      `Amount: ${money(Number(payment.amount) || 0)}`,
+      `Date: ${payment.date || dateLabel(payment.createdAt)}`,
+      `Category: ${payment.category || 'Uncategorized'}`,
+      `Paid to: ${payment.paymentTo || payment.person || 'Not provided'}`,
+      `Voucher: ${payment.voucherNumber || 'None'}`,
+      `Description: ${payment.description || 'None'}`
+    ].join('\n');
+    Alert.alert('Delete payment permanently?', `${paymentLabel}\n\n${details}\n\nThis removes the payment and its linked activity and receipt attachments. The original expense record and receipt will remain.`, [
+      {text:'Cancel', style:'cancel'},
+      {text:'Delete', style:'destructive', onPress: async () => {
+        if (deletingPaymentRef.current) return;
+        deletingPaymentRef.current = payment.id;
+        setDeletingPaymentId(payment.id);
+        try {
+          await deletePaymentRecord(payment, uid);
+          Alert.alert('Payment deleted', `${paymentLabel} was deleted.`);
+        } catch (error: any) {
+          Alert.alert('Could not delete payment', error?.message || 'Check your connection and try again.');
+        } finally {
+          deletingPaymentRef.current = null;
+          setDeletingPaymentId(null);
+        }
+      }}
+    ]);
+  };
+
   const backup = async () => {
     setToolBusy(true);
     try { await exportProjectBackup(); Alert.alert('Backup exported','Sheets, structured records and attachments were included. Store this file securely.'); }
@@ -221,7 +253,7 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
       </>:null}
       {current.type==='payments'&&contractLedger.length>0?<View style={{backgroundColor:white,borderWidth:1,borderColor:line,borderRadius:10,padding:12,marginBottom:12}}><Text style={{fontWeight:'900',color:ink}}>Agreement reconciliation</Text>{contractLedger.map(({contract,advances,paid,balance,overpaid})=><Text key={contract.id} style={{fontSize:12,color:muted,marginTop:6}}>{contract.person||'Agreement'} · Agreed {money(advances+paid+balance-overpaid)} · Advances {money(advances)} · Other payments {money(paid)} · Outstanding {money(balance)}{overpaid?` · Overpaid ${money(overpaid)}`:''}</Text>)}</View>:null}
 
-      {current.type==='payments'&&filteredPayments.slice(0,visibleCount).map(payment=><View key={payment.id} style={{backgroundColor:white,borderRadius:12,padding:13,marginBottom:9,borderWidth:1,borderColor:line}}><Text style={{fontWeight:'800',color:ink}}>{payment.paymentId||payment.id} · {payment.paymentTo||payment.person||'Not provided'} · {money(Number(payment.amount)||0)}</Text><Text style={{fontSize:11,color:muted,marginTop:4}}>{payment.date||dateLabel(payment.createdAt)} · {payment.voucherNumber||'No voucher'} · {payment.category||'Uncategorized'} · {payment.method||'Mode not provided'} · {payment.status||'Legacy'}</Text>{payment.description?<Text style={{fontSize:12,color:muted,marginTop:4}}>{payment.description}</Text>:null}<View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginTop:8}}>{owner?<TouchableOpacity onPress={()=>{setEditingId(payment.id);setValues(Object.fromEntries(modules.find(m=>m.type==='payments')!.fields.map(f=>[f.key,String(payment[f.key]??'')])));setValues(old=>({...old,sourceExpenseId:payment.sourceExpenseId||''}));setModal(true);}} style={{padding:8,backgroundColor:'#E6F1EC',borderRadius:8}}><Text style={{color:green,fontWeight:'800'}}>Edit</Text></TouchableOpacity>:null}<TouchableOpacity disabled={toolBusy} onPress={()=>void exportPaymentReceiptPdf(payment,sheets)} style={{padding:8,backgroundColor:'#EAF0F7',borderRadius:8}}><Text style={{color:'#365775',fontWeight:'800'}}>Open / Share PDF</Text></TouchableOpacity></View><BillAttachments recordId={payment.id} canEdit={owner} language="en"/>{payment.sourceExpenseId?<><Text style={{fontSize:12,color:ink,fontWeight:'800',marginTop:8}}>Original Daily Expenses receipt · {payment.voucherNumber||''}</Text><BillAttachments recordId={payment.sourceExpenseId} canEdit={false} language="en"/></>:null}</View>)}
+      {current.type==='payments'&&filteredPayments.slice(0,visibleCount).map(payment=><View key={payment.id} style={{backgroundColor:white,borderRadius:12,padding:13,marginBottom:9,borderWidth:1,borderColor:line}}><Text style={{fontWeight:'800',color:ink}}>{payment.paymentId||payment.id} · {payment.paymentTo||payment.person||'Not provided'} · {money(Number(payment.amount)||0)}</Text><Text style={{fontSize:11,color:muted,marginTop:4}}>{payment.date||dateLabel(payment.createdAt)} · {payment.voucherNumber||'No voucher'} · {payment.category||'Uncategorized'} · {payment.method||'Mode not provided'} · {payment.status||'Legacy'}</Text>{payment.description?<Text style={{fontSize:12,color:muted,marginTop:4}}>{payment.description}</Text>:null}<View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginTop:8}}>{owner?<><TouchableOpacity onPress={()=>{setEditingId(payment.id);setValues(Object.fromEntries(modules.find(m=>m.type==='payments')!.fields.map(f=>[f.key,String(payment[f.key]??'')])));setValues(old=>({...old,sourceExpenseId:payment.sourceExpenseId||''}));setModal(true);}} style={{padding:8,backgroundColor:'#E6F1EC',borderRadius:8}}><Text style={{color:green,fontWeight:'800'}}>Edit</Text></TouchableOpacity><TouchableOpacity disabled={!!deletingPaymentId} onPress={()=>confirmDeletePayment(payment)} style={{padding:8,backgroundColor:'#F9E8E6',borderRadius:8,opacity:deletingPaymentId===payment.id?0.55:1}}><Text style={{color:'#B64D43',fontWeight:'800'}}>{deletingPaymentId===payment.id?'◌ Deleting…':'🗑 Delete'}</Text></TouchableOpacity></>:null}<TouchableOpacity disabled={toolBusy} onPress={()=>void exportPaymentReceiptPdf(payment,sheets)} style={{padding:8,backgroundColor:'#EAF0F7',borderRadius:8}}><Text style={{color:'#365775',fontWeight:'800'}}>Open / Share PDF</Text></TouchableOpacity></View><BillAttachments recordId={payment.id} canEdit={owner} language="en"/>{payment.sourceExpenseId?<><Text style={{fontSize:12,color:ink,fontWeight:'800',marginTop:8}}>Original Daily Expenses receipt · {payment.voucherNumber||''}</Text><BillAttachments recordId={payment.sourceExpenseId} canEdit={false} language="en"/></>:null}</View>)}
 
       {current.type==='stock'&&inventory.slice(0,visibleCount).map(item=><View key={`${item.material}-${item.unit}`} style={{backgroundColor:white,borderRadius:12,padding:13,marginBottom:9,borderWidth:1,borderColor:line}}><Text style={{fontWeight:'900',color:item.lowStock?'#B64D43':ink}}>{item.material} · {item.available} {item.unit}{item.lowStock?' · LOW STOCK':''}</Text><Text style={{fontSize:12,color:muted,marginTop:5}}>Ordered {item.purchased} · Received {item.received} · Returns in {item.returnedToStock} · Supplier returns {item.returnedToSupplier} · Used {item.used} · Wastage {item.wastage}{item.lowStockLevel?` · Alert below ${item.lowStockLevel}`:''}{item.rate?` · Rate ${money(item.rate)}`:''}{item.supplier?` · ${item.supplier}`:''}</Text></View>)}
 

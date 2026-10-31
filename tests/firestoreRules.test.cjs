@@ -91,6 +91,8 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal(viewerStockWrite.status,403,await viewerStockWrite.text());
   const paymentUpdate=await commit('owner',[{update:{name:standalonePaymentPath,fields:{amount:numberValue(30)}},updateMask:{fieldPaths:['amount']}}]);
   assert.equal(paymentUpdate.status,200,await paymentUpdate.text());
+  assert.equal((await request('projects/ksk/payments/payment1','viewer','DELETE')).status,403,'Viewers must not delete payments directly.');
+  assert.equal((await request('projects/ksk/payments/payment1','owner','DELETE')).status,200,'Project owners may delete payments.');
   const wrongProject=await request('projects/other/stock/movement-owner','owner');
   assert.equal(wrongProject.status,403);
 

@@ -1,6 +1,6 @@
 import {
   arrayUnion, collection, doc, documentId, getDoc, getDocs, limit, onSnapshot, orderBy, query,
-  runTransaction, serverTimestamp, startAfter, Timestamp, updateDoc, writeBatch
+  runTransaction, serverTimestamp, startAfter, Timestamp, updateDoc, where, writeBatch
 } from 'firebase/firestore';
 import {auth, db, firebaseConfig} from '../firebase';
 import {isDuplicatePaymentRetry, validatePaymentRecord} from './paymentMath';
@@ -273,6 +273,33 @@ export async function addProjectRecord(type: ProjectRecordType, values: Record<s
   try { await batch.commit(); }
   catch (error: any) { throw new Error(describeFirestoreError(error, 'write', type)); }
   return recordRef.id;
+}
+
+/** Delete one payment and its own activity/receipt records atomically. */
+export async function deletePaymentRecord(payment: ProjectRecord, uid: string): Promise<void> {
+  if (!db || !uid || !auth?.currentUser) throw new Error('Sign in as the project owner to delete payments.');
+  if (auth.currentUser.uid !== uid) throw new Error('Authentication changed. Sign in again and retry.');
+  if (firebaseConfig.projectId !== 'ksk-house-construction' || db.app.options.projectId !== firebaseConfig.projectId) throw new Error('Wrong Firebase project. Payment deletion was stopped.');
+  if (!payment?.id || payment.type !== 'payments') throw new Error('This payment record is invalid or no longer available.');
+
+  const paymentRef = doc(db, 'projects', PROJECT_ID, 'payments', payment.id);
+  const activityQuery = query(collection(db, 'projects', PROJECT_ID, 'activity'), where('sheetId', '==', 'module_payments'));
+  const receiptQuery = query(collection(db, 'projects', PROJECT_ID, 'bills', payment.id, 'images'));
+  const [current, activitySnapshot, receiptSnapshot] = await Promise.all([
+    getDoc(paymentRef), getDocs(activityQuery), getDocs(receiptQuery)
+  ]);
+  if (!current.exists()) throw new Error('This payment was already deleted or no longer exists.');
+  const paymentId = String(current.data().paymentId || payment.id);
+  const relatedActivity = activitySnapshot.docs.filter(item => {
+    const data = item.data();
+    return data.sheetId === 'module_payments' && (data.itemName === paymentId || data.itemName === payment.id);
+  });
+  if (relatedActivity.length + receiptSnapshot.size + 1 > 500) throw new Error('This payment has too many linked records to remove safely in one operation. Contact support.');
+  const batch = writeBatch(db);
+  batch.delete(paymentRef);
+  relatedActivity.forEach(item => batch.delete(item.ref));
+  receiptSnapshot.docs.forEach(item => batch.delete(item.ref));
+  await batch.commit();
 }
 
 export async function decideApproval(id: string, status: 'approved' | 'rejected', note: string, uid: string) {
