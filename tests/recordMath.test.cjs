@@ -4,6 +4,7 @@ const {summarizeContracts, summarizeInventory} = require('../src/services/record
 const {getMaterialOptions} = require('../src/services/materialOptions.js');
 const {getDailyExpenseVoucherRows,canCreateVoucherPayment,voucherRemainingAmount,validateAgreementLink} = require('../src/services/projectRecordLinks.js');
 const {renderReceiptSection} = require('../src/services/reportReceipts.js');
+const {paymentIdForDocument,validatePaymentRecord,summarizePaymentRecords} = require('../src/services/paymentMath.js');
 
 test('material dropdown catalogue includes distinct values from all three material sheets',()=>{
   const options=getMaterialOptions({materials_ground:{values:[['Material / Item'],['Cement'],['Steel']]},materials_first:{values:[['Item'],['Steel'],['Blocks']]},materials_boq:{values:[['Description'],['Sand'],['Tiles']]}});
@@ -100,4 +101,15 @@ test('contract summaries surface overpayment rather than a negative outstanding 
   const [entry]=summarizeContracts([{id:'c',agreedAmount:100}],[{contractId:'c',paymentKind:'advance',amount:80},{contractId:'c',paymentKind:'payment',amount:40}]);
   assert.equal(entry.balance,0);
   assert.equal(entry.overpaid,20);
+});
+
+test('payment IDs are deterministic and payment validation rejects invalid amount or date',()=>{
+  assert.equal(paymentIdForDocument('abc123456789'),'KSK-PAY-ABC123456789');
+  assert.equal(validatePaymentRecord({amount:25,date:'2026-04-05',paymentTo:'Vendor'}),true);
+  assert.throws(()=>validatePaymentRecord({amount:0,date:'2026-04-05',paymentTo:'Vendor'}),/positive/);
+  assert.throws(()=>validatePaymentRecord({amount:25,date:'2026-02-30',paymentTo:'Vendor'}),/valid payment date/);
+});
+
+test('payment reconciliation counts payment records once and separates advances',()=>{
+  assert.deepEqual(summarizePaymentRecords([{amount:200,paymentKind:'advance',sourceExpenseId:'e1',contractId:'c'},{amount:300,sourceExpenseId:'e1',contractId:'c'},{amount:25}], [{id:'c',agreedAmount:600}]), {paid:525,advances:200,contractValue:600,remaining:100,overpaid:0,count:3});
 });

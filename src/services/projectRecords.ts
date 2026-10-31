@@ -3,6 +3,7 @@ import {
   runTransaction, serverTimestamp, startAfter, Timestamp, updateDoc, writeBatch
 } from 'firebase/firestore';
 import {db} from '../firebase';
+import {validatePaymentRecord} from './paymentMath';
 
 export type ProjectRecordType = 'payments' | 'contracts' | 'stock' | 'progress' | 'diary' | 'approvals' | 'reminders';
 export type ProjectRecord = {id: string; type: ProjectRecordType; createdAt?: any; createdBy?: string; [key: string]: any};
@@ -107,7 +108,7 @@ export async function addProjectRecord(type: ProjectRecordType, values: Record<s
     if (!payload.person || !Number.isFinite(payload.agreedAmount)) throw new Error('A person and agreed amount are required for an agreement.');
   }
   if (type === 'payments') {
-    if (!Number.isFinite(Number(clean.amount)) || Number(clean.amount) <= 0 || !clean.date || !(clean.paymentTo || clean.person)) throw new Error('Enter payment to, a positive amount and a valid date. Agreement linking is optional.');
+    validatePaymentRecord(clean);
     payload.amount = Number(clean.amount);
     payload.paymentKind = clean.paymentKind === 'advance' ? 'advance' : 'payment';
     if (clean.paymentTo && !clean.person) payload.person = clean.paymentTo;
@@ -122,11 +123,22 @@ export async function addProjectRecord(type: ProjectRecordType, values: Record<s
   const recordRef = existingId ? doc(path(type), existingId) : createId ? doc(path(type), createId) : doc(path(type));
   const activityRef = operationId ? doc(db, 'projects', PROJECT_ID, 'activity', operationId) : doc(collection(db, 'projects', PROJECT_ID, 'activity'));
   const label = type.charAt(0).toUpperCase() + type.slice(1);
+  if (type === 'payments' && !existingId) {
+    // Reuse the stable client allocated ID on retries, and treat an already
+    // committed record as success. This prevents a second payment on a retry.
+    await runTransaction(db, async transaction => {
+      const existing = await transaction.get(recordRef);
+      if (existing.exists()) return;
+      transaction.set(recordRef, payload);
+      transaction.set(activityRef, {title: 'Added Payment record', body: 'Payment record added in Project Records', actorUid: uid, actorName: 'Project owner', sheetId: 'module_payments', sheetName: 'Payments', changeType: 'edited', itemName: clean.paymentId || recordRef.id, details: 'Payment record created', createdAt: serverTimestamp()});
+    });
+    return recordRef.id;
+  }
   if (existingId) {
     const {createdAt, createdBy, ...changes} = payload;
     batch.update(recordRef, {...changes, updatedBy:uid});
   } else batch.set(recordRef, payload);
-  batch.set(activityRef, {title: `${existingId?'Updated':'Added'} ${label} record`, body: `${label} record ${existingId?'updated':'added'} in Project Records`, actorUid: uid, actorName: 'Project owner', sheetId: `module_${type}`, sheetName: label, changeType: 'edited', itemName: label, details: `${label} record ${existingId?'updated':'created'}`, createdAt: serverTimestamp()});
+  batch.set(activityRef, {title: `${existingId?'Updated':'Added'} ${label} record`, body: `${label} record ${existingId?'updated':'added'} in Project Records`, actorUid: uid, actorName: 'Project owner', sheetId: `module_${type}`, sheetName: label, changeType: 'edited', itemName: clean.paymentId || label, details: `${label} record ${existingId?'updated':'created'}`, createdAt: serverTimestamp()});
   await batch.commit();
   return recordRef.id;
 }
