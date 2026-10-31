@@ -995,8 +995,10 @@ export default function App() {
     if (!auth) { setRoleChecked(true); return; }
     return onAuthStateChanged(auth, next => {
       setUser(next);
-      if (!next) { setRole(null); setRoleChecked(true); }
-      else { setRoleChecked(false); }
+      // Never let a previous account's role authorize listeners for the next
+      // account while its membership document is still loading.
+      setRole(null);
+      setRoleChecked(!next);
     });
   }, []);
 
@@ -1430,7 +1432,7 @@ export default function App() {
     }
     if (screen === 'Expenses') return <View style={{flex:1}}><SheetView sheetId="daily_expenses" sheet={sheets.daily_expenses} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('daily_expenses', index)} onAdd={() => startAdd('daily_expenses')} onDelete={(index: number) => deleteRecord('daily_expenses', index)} /></View>;
     if (screen === 'Progress') return <View style={{flex:1}}><SheetView sheetId="work_schedule" sheet={sheets.work_schedule} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('work_schedule', index)} onAdd={() => startAdd('work_schedule')} onDelete={(index: number) => deleteRecord('work_schedule', index)} /></View>;
-    if (screen === 'Records') return user && !demoMode ? <ProjectRecords uid={user.uid} owner={canEdit} sheets={sheets} sheetsLoaded={cloudSheetsLoaded} sheetsReady={cloudSheetsLoaded && cloudCount > 0} /> : <View style={{padding:20}}><Text style={{color:C.muted}}>Sign in to use synced project records.</Text></View>;
+    if (screen === 'Records') return user && !demoMode ? <ProjectRecords uid={user.uid} owner={canEdit} sheets={sheets} sheetsLoaded={cloudSheetsLoaded} sheetsReady={cloudSheetsLoaded} /> : <View style={{padding:20}}><Text style={{color:C.muted}}>Sign in to use synced project records.</Text></View>;
     if (screen === 'Activity') return <ActivityScreen activities={activities} language={language} canClear={canEdit} onClear={handleClearActivity}/>;
     return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} language={language} onLanguageChange={changeLanguage} onExportExcel={exportExcel} onExportPdf={exportPdf}/>;
   };

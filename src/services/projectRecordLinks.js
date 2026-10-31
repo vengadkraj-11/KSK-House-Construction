@@ -27,9 +27,19 @@ function dateValue(row, index) {
 function canCreateVoucherPayment(payments = [], sourceExpenseId, allowPartial = false, editingId) {
   return !sourceExpenseId || allowPartial || !payments.some(payment => payment.sourceExpenseId === sourceExpenseId && payment.id !== editingId);
 }
+function voucherRemainingAmount(expense, payments = [], editingId) {
+  if (!expense) return null;
+  const total = Number(String(expense.amount ?? '').replace(/[₹,\s]/g, ''));
+  if (!Number.isFinite(total)) return null;
+  const paid = payments.filter(payment => payment.id !== editingId &&
+    ((expense.id && payment.sourceExpenseId === expense.id) ||
+     (!payment.sourceExpenseId && expense.voucherNumber && payment.voucherNumber === expense.voucherNumber)))
+    .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+  return Math.max(0, total - paid);
+}
 function validateAgreementLink(contractId, person, contracts = []) {
   if (!contractId) return true;
   const contract = contracts.find(item => item.id === contractId);
   return !!contract && contract.person === person;
 }
-module.exports = {getDailyExpenseVoucherRows, canCreateVoucherPayment, validateAgreementLink};
+module.exports = {getDailyExpenseVoucherRows, canCreateVoucherPayment, voucherRemainingAmount, validateAgreementLink};

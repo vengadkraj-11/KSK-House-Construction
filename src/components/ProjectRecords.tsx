@@ -1,16 +1,16 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View} from 'react-native';
 import {Picker} from '@react-native-picker/picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import {addProjectRecord, cancelReminderRecord, dateLabel, decideApproval, ProjectRecord, ProjectRecordType, setReminderDate, subscribeProjectRecords} from '../services/projectRecords';
+import {addProjectRecord, cancelReminderRecord, dateLabel, decideApproval, newProjectRecordId, ProjectRecord, ProjectRecordType, setReminderDate, subscribeProjectRecords} from '../services/projectRecords';
 import BillAttachments from './BillAttachments';
 import {cancelLocalReminder, reconcileLocalReminders, scheduleLocalReminder} from '../services/notifications';
 import {exportProjectBackup, importProjectBackup} from '../services/projectBackup';
 import {exportProjectReportPdf, exportProjectReports} from '../services/projectReports';
 import {summarizeContracts, summarizeInventory} from '../services/recordMath';
 import {getMaterialOptions} from '../services/materialOptions';
-import {canCreateVoucherPayment, getDailyExpenseVoucherRows, validateAgreementLink} from '../services/projectRecordLinks';
+import {canCreateVoucherPayment, getDailyExpenseVoucherRows, validateAgreementLink, voucherRemainingAmount} from '../services/projectRecordLinks';
 
 type Field = {key: string; label: string; placeholder?: string; numeric?: boolean; options?: string[]};
 type Module = {type: ProjectRecordType; title: string; fields: Field[]};
@@ -59,19 +59,25 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
   const [errors, setErrors] = useState<Record<string,string>>({});
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const savingRef=useRef(false);
   const [values, setValues] = useState<Record<string,string>>({});
   const [editingId, setEditingId] = useState<string | undefined>();
+  const [pendingCreateId, setPendingCreateId] = useState<string | undefined>();
+  const [pendingActivityId, setPendingActivityId] = useState<string | undefined>();
   const [decisionNotes, setDecisionNotes] = useState<Record<string,string>>({});
   const [deciding, setDeciding] = useState<string | null>(null);
   const [reminderDates, setReminderDates] = useState<Record<string,string>>({});
   const [toolBusy, setToolBusy] = useState(false);
   const [visibleCount, setVisibleCount] = useState(50);
   const [historyCounts, setHistoryCounts] = useState<Record<string,number>>({});
+  const [retrySubscriptions, setRetrySubscriptions] = useState(0);
   const current = visibleModules.find(module => module.type === active) || visibleModules[0];
   const items = records[current.type] || [];
   const contracts = records.contracts || [];
-  const reportsReady=sheetsReady&&visibleModules.every(module=>loaded[module.type]&&!errors[module.type]);
-  const reportsLoading=!sheetsLoaded||visibleModules.some(module=>!loaded[module.type]);
+  const requiredReportTypes:ProjectRecordType[]=['payments','contracts','stock','progress','diary'];
+  const reportsReady=sheetsReady&&requiredReportTypes.every(type=>loaded[type]&&!errors[type]);
+  const reportsLoading=!sheetsLoaded||requiredReportTypes.some(type=>!loaded[type]);
+  const reportStatus=visibleModules.map(module=>({name:module.title,state:errors[module.type]?'failed':loaded[module.type]?(records[module.type]?.length?'loaded':'empty'):'loading',error:errors[module.type]||''}));
 
   useEffect(() => {
     setRecords({}); setLoaded({}); setErrors({}); setActive('payments');
@@ -81,7 +87,7 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
       setErrors(old => ({...old, [module.type]: ''}));
     }, message => { setErrors(old => ({...old, [module.type]: message})); setLoaded(old => ({...old, [module.type]: true})); }));
     return () => stops.forEach(stop => stop());
-  }, [owner, uid]);
+  }, [owner, uid, retrySubscriptions]);
 
   useEffect(()=>{
     if(owner&&uid&&records.reminders)void reconcileLocalReminders(uid,records.reminders).catch(error=>console.warn('Could not sync local reminders',error));
@@ -93,25 +99,35 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
   const materialOptions=useMemo(()=>[...new Set([...getMaterialOptions(sheets),...(records.stock||[]).map(r=>String(r.material||'').trim()).filter(Boolean)])],[sheets,records.stock]);
 
   const save = async () => {
+    if(savingRef.current)return;
     const required: Record<string,string[]> = {payments:['amount','date'],contracts:['person','agreedAmount'],stock:['material','unit','direction','quantity'],progress:['stage','percent'],diary:['title','date'],approvals:['expenseRef'],reminders:['title','dueDate']};
     const missing = current.fields.find(field => required[current.type]?.includes(field.key) && !String(values[field.key]||'').trim());
     if (missing) { Alert.alert('Required field', `Please enter ${missing.label}.`); return; }
+    const invalidNumber=current.fields.find(field=>field.numeric&&String(values[field.key]||'').trim()&&(!Number.isFinite(Number(values[field.key]))||Number(values[field.key])<0));
+    if(invalidNumber){Alert.alert('Invalid value',`${invalidNumber.label} must be a valid non-negative number.`);return;}
     if (current.type === 'payments') {
       if(!validateAgreementLink(values.contractId,values.person,contracts)){Alert.alert('Invalid agreement','Choose an existing agreement belonging to the selected person.'); return;}
       if(!canCreateVoucherPayment(records.payments||[],values.sourceExpenseId,values.allowPartial==='true',editingId)){Alert.alert('Voucher already linked','A payment already references this voucher. Select “Allow partial payment” to record a separate transaction.');return;}
+      const linkedExpense=expenseRows.find(row=>row.id===values.sourceExpenseId);
+      const remaining=values.sourceExpenseId?voucherRemainingAmount(linkedExpense,records.payments||[],editingId):null;
+      if(remaining!==null&&Number(values.amount)>remaining){Alert.alert('Payment exceeds voucher balance',`This voucher has ${money(remaining)} remaining.`);return;}
     }
     if(current.type==='contracts'&&editingId&&(records.payments||[]).some(payment=>payment.contractId===editingId&&payment.person!==values.person)){Alert.alert('Agreement person is linked','This agreement has payments. Keep its person unchanged so the existing payment links remain valid.');return;}
-    setSaving(true);
+    savingRef.current=true;setSaving(true);
     try {
       const clean: Record<string,any> = {};
       current.fields.forEach(field => { const value=(values[field.key]||'').trim(); if(value&&field.key!=='voucherNumber') clean[field.key]=field.numeric?Number(value):value; });
       if(current.type==='payments'){delete clean.allowPartial; if(values.voucherNumber)clean.voucherNumber=values.voucherNumber;if(values.sourceExpenseId)clean.sourceExpenseId=values.sourceExpenseId;if(clean.paymentTo&&!clean.person)clean.person=clean.paymentTo;}
-      const id = await addProjectRecord(current.type, clean, uid, editingId);
+      const createId=editingId?undefined:(pendingCreateId||newProjectRecordId(current.type));
+      if(createId&&!pendingCreateId)setPendingCreateId(createId);
+      const activityId=pendingActivityId||newProjectRecordId(current.type);
+      if(!pendingActivityId)setPendingActivityId(activityId);
+      const id = await addProjectRecord(current.type, clean, uid, editingId, createId, activityId);
       let extra = '';
       if (current.type === 'reminders') extra = ` ${await scheduleLocalReminderForRecord(id, uid, clean.title, clean.notes || clean.title, clean.dueDate)}`;
-      setModal(false); setValues({}); setEditingId(undefined); Alert.alert('Saved',`${current.title} record ${editingId?'updated':'saved'}.${extra}`);
+      setModal(false); setValues({}); setEditingId(undefined); setPendingCreateId(undefined); setPendingActivityId(undefined); Alert.alert('Saved',`${current.title} record ${editingId?'updated':'saved'}.${extra}`);
     } catch (error:any) { Alert.alert('Could not save',error?.message||'Check your connection and try again.'); }
-    finally { setSaving(false); }
+    finally { savingRef.current=false;setSaving(false); }
   };
 
   const decide = async (record: ProjectRecord, status: 'approved'|'rejected') => {
@@ -142,13 +158,13 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
   };
   const reports = async () => {
     setToolBusy(true);
-    try { await exportProjectReports(records,sheets); }
+    try { await exportProjectReports(records,sheets,reportStatus); }
     catch(error:any) { Alert.alert('Report export failed',error?.message||'Please retry.'); }
     finally { setToolBusy(false); }
   };
   const reportPdf = async () => {
     setToolBusy(true);
-    try { await exportProjectReportPdf(records,sheets); }
+    try { await exportProjectReportPdf(records,sheets,reportStatus); }
     catch(error:any) { Alert.alert('PDF export failed',error?.message||'Please retry.'); }
     finally { setToolBusy(false); }
   };
@@ -161,8 +177,11 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
       <View style={{backgroundColor:white,borderRadius:16,padding:16,borderWidth:1,borderColor:line,marginBottom:13}}>
         <Text style={{fontSize:18,fontWeight:'900',color:ink}}>{current.title}</Text>
         <Text style={{fontSize:12,color:muted,marginTop:5}}>{current.type==='payments'?'Read-only access to all project payment and receipt entries.':current.type==='stock'?'On hand = received + returned to stock − supplier returns − used − wastage. Purchases are order quantities, not stock.':'Records are read in bounded pages; totals include the full collection.'}</Text>
-        {owner?<TouchableOpacity onPress={()=>{setEditingId(undefined);setValues(current.type==='payments'?{paymentKind:'payment'}:{});setModal(true);}} style={{marginTop:14,backgroundColor:green,padding:12,borderRadius:10,alignItems:'center'}}><Text style={{color:white,fontWeight:'900'}}>+ Add {current.title.toLowerCase()}</Text></TouchableOpacity>:<Text style={{color:muted,fontSize:12,marginTop:12}}>View-only access</Text>}
-        <View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginTop:10}}><TouchableOpacity disabled={toolBusy||!reportsReady} onPress={()=>void reports()} style={{padding:9,borderRadius:8,backgroundColor:'#EAF0F7'}}><Text style={{color:'#365775',fontWeight:'800'}}>{toolBusy?'Working…':reportsReady?'Export reports (.xlsx)':reportsLoading?'Loading all records…':'Report data unavailable'}</Text></TouchableOpacity><TouchableOpacity disabled={toolBusy||!reportsReady} onPress={()=>void reportPdf()} style={{padding:9,borderRadius:8,backgroundColor:'#EAF0F7'}}><Text style={{color:'#365775',fontWeight:'800'}}>{reportsReady?'Export report (.pdf)':reportsLoading?'Loading all records…':'Report data unavailable'}</Text></TouchableOpacity>{owner?<TouchableOpacity disabled={toolBusy} onPress={()=>void backup()} style={{padding:9,borderRadius:8,backgroundColor:'#E6F1EC'}}><Text style={{color:green,fontWeight:'800'}}>Export full backup</Text></TouchableOpacity>:null}{owner?<TouchableOpacity disabled={toolBusy} onPress={()=>void restore()} style={{padding:9,borderRadius:8,backgroundColor:'#FAF1E1'}}><Text style={{color:'#8A5A13',fontWeight:'800'}}>Import missing records</Text></TouchableOpacity>:null}</View>
+        {owner?<TouchableOpacity onPress={()=>{setEditingId(undefined);setPendingCreateId(undefined);setPendingActivityId(undefined);setValues(current.type==='payments'?{paymentKind:'payment'}:{});setModal(true);}} style={{marginTop:14,backgroundColor:green,padding:12,borderRadius:10,alignItems:'center'}}><Text style={{color:white,fontWeight:'900'}}>+ Add {current.title.toLowerCase()}</Text></TouchableOpacity>:<Text style={{color:muted,fontSize:12,marginTop:12}}>View-only access</Text>}
+        <Text style={{fontSize:11,color:muted,marginTop:8}}>Report sections: {reportStatus.map(section=>`${section.name}: ${section.state}${section.error?` (${section.error})`:''}`).join(' · ')}</Text>
+        {reportStatus.some(section=>section.state==='failed')?<TouchableOpacity onPress={()=>setRetrySubscriptions(value=>value+1)} style={{alignSelf:'flex-start',paddingVertical:6}}><Text style={{fontSize:12,color:green,fontWeight:'800'}}>Retry failed record loads</Text></TouchableOpacity>:null}
+        {reportsReady&&reportStatus.some(section=>section.state==='failed')?<Text style={{fontSize:11,color:'#9A6713',marginTop:4}}>Exports will be marked partial because an optional section failed to load.</Text>:null}
+        <View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginTop:10}}><TouchableOpacity disabled={toolBusy||!reportsReady} onPress={()=>void reports()} style={{padding:9,borderRadius:8,backgroundColor:'#EAF0F7'}}><Text style={{color:'#365775',fontWeight:'800'}}>{toolBusy?'Working…':reportsReady?'Export reports (.xlsx)':reportsLoading?'Loading required records…':'Required report data unavailable'}</Text></TouchableOpacity><TouchableOpacity disabled={toolBusy||!reportsReady} onPress={()=>void reportPdf()} style={{padding:9,borderRadius:8,backgroundColor:'#EAF0F7'}}><Text style={{color:'#365775',fontWeight:'800'}}>{reportsReady?'Export report (.pdf)':reportsLoading?'Loading required records…':'Required report data unavailable'}</Text></TouchableOpacity>{owner?<TouchableOpacity disabled={toolBusy} onPress={()=>void backup()} style={{padding:9,borderRadius:8,backgroundColor:'#E6F1EC'}}><Text style={{color:green,fontWeight:'800'}}>Export full backup</Text></TouchableOpacity>:null}{owner?<TouchableOpacity disabled={toolBusy} onPress={()=>void restore()} style={{padding:9,borderRadius:8,backgroundColor:'#FAF1E1'}}><Text style={{color:'#8A5A13',fontWeight:'800'}}>Import missing records</Text></TouchableOpacity>:null}</View>
       </View>
 
       {current.type==='payments'&&contractLedger.length>0?contractLedger.slice(0,visibleCount).map(({contract,history,advances,paid,balance,overpaid})=><View key={contract.id} style={{backgroundColor:white,borderRadius:15,padding:14,marginBottom:12,borderWidth:1,borderColor:line}}>
@@ -192,9 +211,9 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
       {!loaded[current.type]?<ActivityIndicator color={green} style={{marginTop:25}}/>:errors[current.type]?<Text style={{color:'#B64D43',padding:16}}>{errors[current.type]}</Text>:items.length===0&&!(current.type==='payments'&&contractLedger.length>0)?<View style={{padding:25,alignItems:'center'}}><Text style={{color:muted}}>No records yet.</Text></View>:null}
     </ScrollView>
     {modal?<View style={{position:'absolute',top:0,bottom:0,left:0,right:0,backgroundColor:'#0007',justifyContent:'flex-end'}}><View style={{backgroundColor:white,borderTopLeftRadius:20,borderTopRightRadius:20,padding:18,maxHeight:'88%'}}>
-      <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><Text style={{fontSize:18,fontWeight:'900',color:ink}}>{editingId?'Edit':'New'} {current.title}</Text><TouchableOpacity onPress={()=>{setModal(false);setEditingId(undefined);}}><Text style={{fontSize:22,color:muted}}>×</Text></TouchableOpacity></View>
+      <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><Text style={{fontSize:18,fontWeight:'900',color:ink}}>{editingId?'Edit':'New'} {current.title}</Text><TouchableOpacity disabled={saving} onPress={()=>{setModal(false);setEditingId(undefined);setPendingCreateId(undefined);setPendingActivityId(undefined);}}><Text style={{fontSize:22,color:muted}}>×</Text></TouchableOpacity></View>
       <ScrollView keyboardShouldPersistTaps="handled">{current.fields.map(field=><View key={field.key} style={{marginBottom:11}}><Text style={{fontSize:12,fontWeight:'800',color:ink,marginBottom:5}}>{field.label}</Text>
-        {field.key==='voucherNumber'?<><Picker selectedValue={values.sourceExpenseId||''} onValueChange={value=>{const source=expenseRows.find(entry=>(entry.id||`row:${entry.rowIndex}`)===value);if(!source){setValues(old=>({...old,voucherNumber:'',sourceExpenseId:''}));return;}setValues(old=>({...old,voucherNumber:source.voucherNumber,sourceExpenseId:source.id,allowPartial:'',date:source.date,floor:source.floor,stage:source.stage,category:source.category,description:source.description,paymentTo:source.paymentTo,person:source.paymentTo,amount:source.amount,method:source.method,paidBy:source.paidBy,receivedBy:source.receivedBy,billReceived:source.billReceived,notes:source.notes,reference:old.reference||''}));}}><Picker.Item label="Standalone payment (no voucher)" value=""/>{expenseRows.map((entry:any)=><Picker.Item key={`${entry.id||entry.rowIndex}-${entry.voucherNumber}`} label={`${entry.voucherNumber} · row ${entry.rowIndex+1}`} value={entry.id||`row:${entry.rowIndex}`}/>)}</Picker>{values.sourceExpenseId?<TouchableOpacity onPress={()=>setValues(old=>({...old,allowPartial:old.allowPartial==='true'?'':'true'}))} style={{padding:8}}><Text style={{color:green,fontSize:12}}>{values.allowPartial==='true'?'✓ ':''}Allow partial payment for this voucher</Text></TouchableOpacity>:null}</>
+        {field.key==='voucherNumber'?<><Picker selectedValue={values.sourceExpenseId||''} onValueChange={value=>{const source=expenseRows.find(entry=>(entry.id||`row:${entry.rowIndex}`)===value);if(!source){setValues(old=>({...old,voucherNumber:'',sourceExpenseId:''}));return;}setValues(old=>({...old,voucherNumber:source.voucherNumber,sourceExpenseId:source.id,allowPartial:'',date:source.date,floor:source.floor,stage:source.stage,category:source.category,description:source.description,paymentTo:source.paymentTo,person:source.paymentTo,amount:source.amount,method:source.method,paidBy:source.paidBy,receivedBy:source.receivedBy,billReceived:source.billReceived,notes:source.notes,reference:old.reference||''}));}}><Picker.Item label="Standalone payment (no voucher)" value=""/>{expenseRows.map((entry:any)=><Picker.Item key={`${entry.id||entry.rowIndex}-${entry.voucherNumber}`} label={`${entry.voucherNumber} · row ${entry.rowIndex+1}`} value={entry.id||`row:${entry.rowIndex}`}/>)}</Picker>{values.sourceExpenseId?<><TouchableOpacity onPress={()=>setValues(old=>({...old,allowPartial:old.allowPartial==='true'?'':'true'}))} style={{padding:8}}><Text style={{color:green,fontSize:12}}>{values.allowPartial==='true'?'✓ ':''}Allow partial payment for this voucher</Text></TouchableOpacity><Text style={{fontSize:12,color:muted}}>Remaining voucher balance: {money(voucherRemainingAmount(expenseRows.find(row=>row.id===values.sourceExpenseId),records.payments||[],editingId)??0)}</Text></>:null}</>
           :field.key==='contractId'?<Picker selectedValue={values.contractId||''} onValueChange={value=>{const contract=contracts.find(row=>row.id===value);setValues(old=>({...old,contractId:String(value),person:contract?.person||old.person||''}));}}><Picker.Item label="No agreement (optional)" value=""/>{contracts.map(contract=><Picker.Item key={contract.id} label={`${contract.person} · ${money(Number(contract.agreedAmount)||0)} · ${contract.id.slice(0,7)}`} value={contract.id}/>)}</Picker>
           :current.type==='stock'&&field.key==='material'?<><Picker selectedValue={values.material&&materialOptions.includes(values.material)?values.material:''} onValueChange={value=>setValues(old=>({...old,material:String(value)}))}><Picker.Item label="Select catalogue material or enter below" value=""/>{materialOptions.map(material=><Picker.Item key={material} label={material} value={material}/>)}</Picker><TextInput value={values.material||''} onChangeText={value=>setValues(old=>({...old,material:value}))} placeholder="Custom material" style={{borderWidth:1,borderColor:line,borderRadius:9,padding:10,color:ink}}/></>
           :field.options?<Picker selectedValue={values[field.key]||field.options[0]} onValueChange={value=>setValues(old=>({...old,[field.key]:String(value)}))}>{field.options.map(option=><Picker.Item key={option} label={option.replaceAll('-',' ')} value={option}/>)}</Picker>

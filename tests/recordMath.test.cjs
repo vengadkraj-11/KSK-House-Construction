@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {summarizeContracts, summarizeInventory} = require('../src/services/recordMath.js');
 const {getMaterialOptions} = require('../src/services/materialOptions.js');
-const {getDailyExpenseVoucherRows,canCreateVoucherPayment,validateAgreementLink} = require('../src/services/projectRecordLinks.js');
+const {getDailyExpenseVoucherRows,canCreateVoucherPayment,voucherRemainingAmount,validateAgreementLink} = require('../src/services/projectRecordLinks.js');
 const {renderReceiptSection} = require('../src/services/reportReceipts.js');
 
 test('material dropdown catalogue includes distinct values from all three material sheets',()=>{
@@ -22,6 +22,13 @@ test('voucher duplicate guard blocks accidental duplicates, permits explicit par
   assert.equal(canCreateVoucherPayment(payments,'source-1',true),true);
   assert.equal(canCreateVoucherPayment(payments,'source-1',false,'p1'),true);
   assert.equal(canCreateVoucherPayment(payments,''),true);
+});
+
+test('partial voucher payments calculate the outstanding amount and exclude the edited payment',()=>{
+  const expense={id:'expense-1',voucherNumber:'V-9',amount:'1000'};
+  const payments=[{id:'p1',sourceExpenseId:'expense-1',amount:300},{id:'p2',voucherNumber:'V-9',amount:200}];
+  assert.equal(voucherRemainingAmount(expense,payments),500);
+  assert.equal(voucherRemainingAmount(expense,payments,'p1'),800);
 });
 
 test('agreement reference is optional and validates existence and selected person when supplied',()=>{

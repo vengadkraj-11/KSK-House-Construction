@@ -1,0 +1,231 @@
+import {
+  collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query,
+  serverTimestamp, setDoc, updateDoc, writeBatch
+} from 'firebase/firestore';
+import {getApp} from 'firebase/app';
+import {getFunctions, httpsCallable} from 'firebase/functions';
+
+import {db} from '../firebase';
+import {LOCAL_WORKBOOK, QUOTE_TEMPLATE} from '../data';
+import {SheetDocument, SheetMap} from '../types';
+
+const PROJECT_ID = 'ksk';
+
+const sheetsPath = () => collection(db!, 'projects', PROJECT_ID, 'sheets');
+const sheetPath = (id: string) => doc(db!, 'projects', PROJECT_ID, 'sheets', id);
+
+// Store rows inside maps because Firestore does not support nested arrays.
+function encodeRows(rows: any[][]) {
+  return Object.fromEntries(
+    (rows || []).map((row, index) => [String(index), row])
+  );
+}
+
+// Restore Firestore maps to normal Excel-style row arrays.
+function decodeRows(data: any): any[][] {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== 'object') return [];
+
+  return Object.keys(data)
+    .sort((a, b) => Number(a) - Number(b))
+    .map(key => data[key] || []);
+}
+
+function encodeSheet(sheet: SheetDocument) {
+  return {
+    ...sheet,
+    values: encodeRows(sheet.values || []),
+    formulas: encodeRows(sheet.formulas || [])
+  };
+}
+
+function decodeSheet(data: any): SheetDocument {
+  return {
+    ...data,
+    values: decodeRows(data.values),
+    formulas: decodeRows(data.formulas)
+  } as SheetDocument;
+}
+
+function makeRecordIds(values: any[][], existing: string[] = []) {
+  return (values || []).map((_, index) => {
+    if (index === 0) return '';
+    return existing[index] || `record_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  });
+}
+
+export async function ensureSheetRecordIds(sheetId: string, sheet: SheetDocument) {
+  if (!db) return;
+  const values = sheet.values || [];
+  const existing = sheet.recordIds || [];
+  if (existing.length === values.length && existing.every((id, index) => index === 0 || !!id)) return;
+
+  const recordIds = makeRecordIds(values, existing);
+  await updateDoc(sheetPath(sheetId), {recordIds});
+}
+
+export function subscribeSheets(
+  onChange: (sheets: SheetMap, count: number) => void,
+  onError: (message: string) => void
+) {
+  if (!db) return () => {};
+
+  return onSnapshot(
+    sheetsPath(),
+    snapshot => {
+      const next: SheetMap = {};
+
+      snapshot.docs.forEach(d => {
+        next[d.id] = decodeSheet(d.data());
+      });
+
+      onChange(next, snapshot.size);
+    },
+    error => onError(error.message)
+  );
+}
+
+export async function seedWorkbook(uid: string) {
+  if (!db) throw new Error('Firebase is not configured.');
+
+  const existing = await getDocs(sheetsPath());
+
+  if (!existing.empty) {
+    throw new Error(
+      'Cloud workbook already contains data. Import was stopped to protect it.'
+    );
+  }
+
+  const batch = writeBatch(db);
+
+  Object.entries(LOCAL_WORKBOOK).forEach(([id, sheet]) => {
+    batch.set(sheetPath(id), {
+      ...encodeSheet({
+        ...sheet,
+        recordIds: makeRecordIds(sheet.values || [])
+      }),
+      updatedAt: serverTimestamp(),
+      updatedBy: uid,
+      importedFrom: 'KSK_House_Cost.xlsx',
+      schemaVersion: 1
+    });
+  });
+
+  await batch.commit();
+}
+
+export async function saveSheet(
+  id: string,
+  sheet: SheetDocument,
+  uid: string,
+  actorName = 'Project owner'
+) {
+  if (!db) throw new Error('Firebase is not configured.');
+
+  const sheetName = (sheet as any).name || id;
+  const batch = writeBatch(db);
+
+  batch.set(sheetPath(id), {
+    ...encodeSheet(sheet),
+    updatedAt: serverTimestamp(),
+    updatedBy: uid,
+    schemaVersion: 1
+  });
+
+  const activityRef = doc(
+    collection(db, 'projects', PROJECT_ID, 'activity')
+  );
+
+  batch.set(activityRef, {
+    title: `UPDATE: ${sheetName}`,
+    body: `${sheetName} — Worksheet updated`,
+    actorUid: uid,
+    actorName,
+    sheetId: id,
+    sheetName,
+    changeType: 'edited',
+    itemName: sheetName,
+    details: 'Worksheet updated',
+    createdAt: serverTimestamp()
+  });
+
+  await batch.commit();
+}
+
+export async function ensureQuoteSheet(uid: string) {
+  if (!db) throw new Error('Firebase is not configured.');
+
+  const ref = doc(db, 'projects', PROJECT_ID, 'sheets', 'quotation_compare');
+  const snap = await getDoc(ref);
+
+  if (!snap.exists()) {
+    const quoteSheet = {
+      ...QUOTE_TEMPLATE,
+      values: [QUOTE_TEMPLATE.values[0]],
+      updatedAt: serverTimestamp(),
+      updatedBy: uid,
+      extraModule: true
+    };
+
+    await setDoc(ref, {
+      ...encodeSheet(quoteSheet),
+    });
+  }
+}
+
+export function subscribeActivities(
+  onChange: (items: any[]) => void,
+  onError: (message: string) => void
+) {
+  if (!db) return () => {};
+
+  const q = query(
+    collection(db, 'projects', PROJECT_ID, 'activity'),
+    orderBy('createdAt', 'desc'),
+    limit(35)
+  );
+
+  return onSnapshot(
+    q,
+    snapshot => {
+      onChange(snapshot.docs.map(d => ({id: d.id, ...d.data()})));
+    },
+    error => onError(error.message)
+  );
+}
+
+export async function registerDevice(
+  uid: string,
+  token: string,
+  platform: string
+) {
+  if (!db || !token) return;
+
+  const safeId = token.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+
+  await setDoc(
+    doc(db, 'users', uid, 'devices', safeId),
+    {
+      token,
+      platform,
+      updatedAt: serverTimestamp(),
+      enabled: true
+    },
+    {merge: true}
+  );
+}
+
+
+// Clear the complete activity history through an owner-verified server function.
+// This does not delete worksheets, bills, expenses or attachments.
+export async function clearActivityHistory(): Promise<number> {
+  if (!db) throw new Error('Firebase is not configured.');
+
+  const functions = getFunctions(getApp(), 'asia-south1');
+  const clearHistory = httpsCallable(functions, 'clearKskActivityHistory');
+
+  const response = await clearHistory({projectId: PROJECT_ID});
+  const result = response.data as {deletedCount?: number};
+
+  return Number(result.deletedCount || 0);
+}

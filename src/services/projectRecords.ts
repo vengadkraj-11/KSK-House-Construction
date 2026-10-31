@@ -11,6 +11,13 @@ const PROJECT_ID = 'ksk';
 const PAGE_SIZE = 250;
 const path = (type: ProjectRecordType) => collection(db!, 'projects', PROJECT_ID, type);
 
+/** Allocate once per form submission so a retry after a lost response cannot
+ * create a second payment document. */
+export function newProjectRecordId(type: ProjectRecordType): string {
+  if (!db) throw new Error('Firebase is not configured.');
+  return doc(path(type)).id;
+}
+
 async function readAll(type: ProjectRecordType): Promise<ProjectRecord[]> {
   if (!db) return [];
   const result: ProjectRecord[] = [];
@@ -74,7 +81,7 @@ function validDate(value: any, key: string) {
   if (!match || !date || date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1 || date.getDate() !== Number(match[3])) throw new Error(`${key} must be a valid YYYY-MM-DD date.`);
 }
 
-export async function addProjectRecord(type: ProjectRecordType, values: Record<string, any>, uid: string, existingId?: string): Promise<string> {
+export async function addProjectRecord(type: ProjectRecordType, values: Record<string, any>, uid: string, existingId?: string, createId?: string, operationId?: string): Promise<string> {
   if (!db) throw new Error('Firebase is not configured.');
   if (!uid) throw new Error('Sign in is required.');
   const clean = {...values};
@@ -112,8 +119,8 @@ export async function addProjectRecord(type: ProjectRecordType, values: Record<s
   }
 
   const batch = writeBatch(db);
-  const recordRef = existingId ? doc(path(type), existingId) : doc(path(type));
-  const activityRef = doc(collection(db, 'projects', PROJECT_ID, 'activity'));
+  const recordRef = existingId ? doc(path(type), existingId) : createId ? doc(path(type), createId) : doc(path(type));
+  const activityRef = operationId ? doc(db, 'projects', PROJECT_ID, 'activity', operationId) : doc(collection(db, 'projects', PROJECT_ID, 'activity'));
   const label = type.charAt(0).toUpperCase() + type.slice(1);
   if (existingId) {
     const {createdAt, createdBy, ...changes} = payload;

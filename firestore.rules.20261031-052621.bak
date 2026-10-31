@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function memberRole(projectId) {
+      let member = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return member.data.projectId == projectId ? member.data.role : null;
+    }
+    function hasProjectAccess(projectId) {
+      return signedIn() && (memberRole(projectId) == 'owner' || memberRole(projectId) == 'viewer');
+    }
+    function isOwner(projectId) {
+      return signedIn() && memberRole(projectId) == 'owner';
+    }
+
+    // Role documents are provisioned by the project administrator only.
+    match /users/{userId} {
+      allow get: if signedIn() && request.auth.uid == userId;
+      allow list, create, update, delete: if false;
+      match /devices/{deviceId} {
+        allow read, create, update, delete: if signedIn() && request.auth.uid == userId;
+      }
+    }
+
+    match /projects/{projectId}/sheets/{sheetId} {
+      allow read: if hasProjectAccess(projectId);
+      allow create, update: if isOwner(projectId)
+        && request.resource.data.updatedBy == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /projects/{projectId}/activity/{activityId} {
+      allow read: if hasProjectAccess(projectId);
+
+      // Only the project owner can create activity records.
+      // The actor UID and server timestamp must match the authenticated request.
+      allow create: if isOwner(projectId)
+        && request.resource.data.keys().hasAll([
+          'actorUid', 'changeType', 'createdAt',
+          'sheetId', 'sheetName', 'title', 'body'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'actorUid', 'actorName', 'changeType', 'createdAt',
+          'sheetId', 'sheetName', 'title', 'body',
+          'itemName', 'details'
+        ])
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.changeType == 'edited'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.sheetId is string
+        && request.resource.data.sheetName is string
+        && request.resource.data.title is string
+        && request.resource.data.body is string;
+
+      allow update, delete: if false;
+    }
+  }
+}

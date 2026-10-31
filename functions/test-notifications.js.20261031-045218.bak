@@ -1,0 +1,34 @@
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const source = fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8');
+const start = source.indexOf('function decodeRows(');
+const end = source.indexOf('\nasync function getViewerTokens');
+
+const code = source.slice(start, end) + '\nmodule.exports = {compareRows};';
+const sandbox = {module: {exports: {}}, JSON, Map, String, Number};
+
+vm.runInNewContext(code, sandbox);
+const compare = sandbox.module.exports.compareRows;
+
+const h = ['Work ID', 'Item / Description', 'Amount'];
+
+const cases = [
+  ['Add', [h, ['1', 'Cement', 100]], [h, ['1', 'Cement', 100], ['2', 'Sand', 200]], ['added']],
+  ['Edit', [h, ['1', 'Cement', 100]], [h, ['1', 'Cement', 150]], ['edited']],
+  ['Delete', [h, ['1', 'Cement', 100]], [h], ['deleted']],
+  ['Add and delete', [h, ['1', 'Cement', 100]], [h, ['2', 'Sand', 200]], ['added', 'deleted']],
+  ['Duplicate unchanged', [h, ['1', 'Cement', 100], ['1', 'Cement', 100]], [h, ['1', 'Cement', 100], ['1', 'Cement', 100]], []]
+];
+
+for (const [name, oldRows, newRows, expected] of cases) {
+  const actual = compare({values: oldRows}, {values: newRows}, 'test')
+    .map(x => x.type).sort();
+
+  if (JSON.stringify(actual) !== JSON.stringify(expected.sort())) {
+    throw new Error(name + ' FAILED: ' + JSON.stringify(actual));
+  }
+
+  console.log('PASS:', name);
+}

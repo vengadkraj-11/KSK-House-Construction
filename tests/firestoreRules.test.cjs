@@ -54,6 +54,24 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const invalidAgreement=await commit('owner',[{update:{name:invalidAgreementPath,fields:{createdBy:stringValue('owner'),amount:numberValue(25),person:stringValue('A'),contractId:stringValue('missing-contract')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
   assert.equal(invalidAgreement.status,403);
 
+  const stockPath=`projects/${project}/databases/(default)/documents/projects/ksk/stock/movement-owner`;
+  const stockCreate=await commit('owner',[{update:{name:stockPath,fields:{createdBy:stringValue('owner'),material:stringValue('Cement'),unit:stringValue('bags'),direction:stringValue('received'),quantity:numberValue(12)}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
+  assert.equal(stockCreate.status,200,await stockCreate.text());
+  const stockUpdate=await commit('owner',[{update:{name:stockPath,fields:{quantity:numberValue(14)}},updateMask:{fieldPaths:['quantity']}}]);
+  assert.equal(stockUpdate.status,200,await stockUpdate.text());
+  const viewerStockWrite=await commit('viewer',[{update:{name:stockPath,fields:{quantity:numberValue(15)}},updateMask:{fieldPaths:['quantity']}}]);
+  assert.equal(viewerStockWrite.status,403,await viewerStockWrite.text());
+  const paymentUpdate=await commit('owner',[{update:{name:standalonePaymentPath,fields:{amount:numberValue(30)}},updateMask:{fieldPaths:['amount']}}]);
+  assert.equal(paymentUpdate.status,200,await paymentUpdate.text());
+  const wrongProject=await request('projects/other/stock/movement-owner','owner');
+  assert.equal(wrongProject.status,403);
+
+  const activityPath=`projects/${project}/databases/(default)/documents/projects/ksk/activity/stock-event`;
+  const validActivity=await commit('owner',[{update:{name:activityPath,fields:{actorUid:stringValue('owner'),actorName:stringValue('Project owner'),changeType:stringValue('edited'),sheetId:stringValue('module_stock'),sheetName:stringValue('Stock'),title:stringValue('Added Stock record'),body:stringValue('Stock record added in Project Records'),itemName:stringValue('Stock'),details:stringValue('Stock record created')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
+  assert.equal(validActivity.status,200,await validActivity.text());
+  const invalidActivity=await commit('owner',[{update:{name:activityPath.replace('stock-event','invalid-event'),fields:{actorUid:stringValue('owner'),changeType:stringValue('edited'),sheetId:stringValue('module_stock'),sheetName:stringValue('Stock'),title:stringValue('Bad'),body:stringValue('Bad'),unexpected:stringValue('extra')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
+  assert.equal(invalidActivity.status,403,await invalidActivity.text());
+
   const deniedPayment=await request('projects/ksk/payments?documentId=viewer-write','viewer','POST',{fields:{createdBy:stringValue('viewer'),amount:numberValue(1)}});
   assert.equal(deniedPayment.status,403);
   const deniedReceipt=await request('projects/ksk/bills/payment1/images?documentId=viewer-photo','viewer','POST',{fields:{recordId:stringValue('payment1'),imageBase64:stringValue('YWJj'),fileName:stringValue('x.jpg'),mimeType:stringValue('image/jpeg'),createdBy:stringValue('owner'),createdAt:{timestampValue:new Date().toISOString()}}});
