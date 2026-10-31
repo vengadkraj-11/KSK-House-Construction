@@ -119,13 +119,121 @@ async function sharePdf(html:string,title:string){
 }
 function pdfStyles(){return `<style>@page{size:A4;margin:16mm}body{font:10pt Arial,sans-serif;color:#18352b;line-height:1.4}header{border-bottom:3px solid #176b4b;padding-bottom:12px;margin-bottom:18px}h1{font-size:20pt;margin:0 0 4px}h2{font-size:13pt;color:#176b4b;margin:18px 0 7px}table{border-collapse:collapse;width:100%;table-layout:fixed;margin:8px 0 16px}th,td{border:1px solid #ccd8d0;padding:7px;text-align:left;overflow-wrap:anywhere}th{background:#e6f1ec;width:28%}.amount{font-size:19pt;font-weight:bold;color:#176b4b}.footer{position:fixed;bottom:0;border-top:1px solid #ccd8d0;padding-top:5px;width:100%;font-size:8pt;color:#718078}.receipt{page-break-before:always}.receipt img{display:block;max-width:100%;max-height:245mm;object-fit:contain;margin:14px auto}.muted{color:#718078}</style>`;}
 export async function exportPaymentReceiptPdf(payment:ProjectRecord,sheets:any={}):Promise<void>{
-  const setup=sheets?.project_setup?.values||[];const setting=(pattern:RegExp)=>String(setup.slice(1).find((row:any[])=>pattern.test(String(row?.[0]||'')))?.[1]||'').trim();
-  const projectName=setting(/project name|owner/i)||'KSK House Construction';const location=setting(/location|site address/i);const id=String(payment.paymentId||payment.id||'Not provided');const currency=String(payment.currency||'₹');
-  const rows=[['Payment date',blank(payment.date)],['Voucher / Bill number',blank(payment.voucherNumber)],['Payment reference',blank(payment.paymentReference||payment.reference)],['Payment mode',blank(payment.method)],['Transaction ID',blank(payment.reference)],['Classification',blank(payment.paymentKind)],['Payment status',blank(payment.status)],['Floor / Area',blank(payment.floor)],['Work stage',blank(payment.stage)],['Expense category',blank(payment.category)],['Description',blank(payment.description)],['Agreement',blank(payment.contractId)],['Source expense reference',blank(payment.sourceExpenseId)],['Paid by',blank(payment.paidBy)],['Paid to',blank(payment.paymentTo||payment.person)],['Received by',blank(payment.receivedBy)],['Entered by',blank(payment.enteredBy||payment.createdBy)],['Notes',blank(payment.notes)]];
-  let images:{voucher:string;payment:string;image:string;filename:string}[]=[];let imageError='';try{images=await receiptImages(payment);}catch(error:any){imageError=error?.code==='permission-denied'?'Receipt access denied.':error?.message||'Receipt images could not be loaded.';}
-  const amount=`<p class="amount">${paymentMoney(payment.amount,currency)}</p>`;const evidence=images.length?renderReceiptSection(images):`<h2>Receipt evidence</h2><p>${imageError?htmlEscape(imageError):'No receipt attached.'}</p>`;
-  const html=`<html><head>${pdfStyles()}</head><body><header><h1>${htmlEscape(projectName)}</h1><div>${htmlEscape(location||'')}</div><h2 style="color:#18352b">PAYMENT RECEIPT</h2><b>Payment ID: ${htmlEscape(id)}</b><div class="muted">Generated ${htmlEscape(new Date().toLocaleString())}</div></header><p class="muted">App-generated payment record. This document is not a recipient-issued receipt or proof of acknowledgement.</p><h2>Amount paid</h2>${amount}<table>${rows.map(([key,value])=>`<tr><th>${htmlEscape(key)}</th><td>${htmlEscape(value)}</td></tr>`).join('')}</table><div class="footer">${htmlEscape(projectName)} · ${htmlEscape(id)} · Generated ${htmlEscape(new Date().toLocaleString())} · Page <span class="pageNumber"></span></div>${evidence}</body></html>`;
-  await sharePdf(html,`Payment receipt ${id}`);
+  const setup=sheets?.project_setup?.values||[];
+  const setting=(pattern:RegExp)=>String(setup.slice(1).find((row:any[])=>pattern.test(String(row?.[0]||'')))?.[1]||'').trim();
+  const projectName=setting(/project name|owner/i)||'KSK House Construction';
+  const location=setting(/location|site address/i);
+  const currency=String(payment.currency||'₹');
+  const id=String(payment.paymentId||payment.id||'');
+  const date=blank(payment.date);
+  const recipient=blank(payment.paymentTo||payment.person);
+  const description=blank(payment.description);
+  const category=blank(payment.category);
+  const mode=blank(payment.method);
+  const reference=blank(payment.paymentReference||payment.reference);
+  const amount=paymentMoney(payment.amount,currency);
+
+  let images:{voucher:string;payment:string;image:string;filename:string}[]=[];
+  let imageError='';
+  try{
+    images=await receiptImages(payment);
+  }catch(error:any){
+    imageError=error?.code==='permission-denied'
+      ?'Receipt image access denied.'
+      :error?.message||'Receipt images could not be loaded.';
+  }
+
+  const detailRows=[
+    ['Payment date',date],
+    ['Voucher / bill number',blank(payment.voucherNumber)],
+    ['Paid to',recipient],
+    ['Description',description],
+    ['Expense category',category],
+    ['Floor / area',blank(payment.floor)],
+    ['Work stage',blank(payment.stage)],
+    ['Payment method',mode],
+    ['Transaction reference',reference],
+    ['Paid by',blank(payment.paidBy)],
+    ['Received by',blank(payment.receivedBy)]
+  ].filter(([,value])=>value!=='Not provided');
+
+  const evidence=images.length
+    ? `<section class="receipt"><h2>Bill / Receipt Attachment</h2>${renderReceiptSection(images)}</section>`
+    : `<section class="receipt"><h2>Bill / Receipt Attachment</h2><p class="muted">${htmlEscape(imageError||'No bill or receipt image attached.')}</p></section>`;
+
+  const html=`<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+@page{size:A4;margin:15mm}
+*{box-sizing:border-box}
+body{font-family:Arial,Helvetica,sans-serif;color:#26352e;font-size:10pt;line-height:1.4;margin:0}
+.header{text-align:center;border-bottom:2px solid #176b4b;padding:0 0 13px;margin-bottom:18px}
+.brand{font-size:19pt;font-weight:700;color:#176b4b;margin:0 0 4px}
+.location{font-size:9pt;color:#65736b}
+.heading{font-size:15pt;letter-spacing:1px;font-weight:700;margin:17px 0 4px;color:#26352e}
+.subheading{font-size:8.5pt;color:#718078}
+.meta{display:flex;justify-content:space-between;gap:12px;margin:12px 0 18px;font-size:9pt}
+.meta div{flex:1}
+.meta strong{display:block;color:#65736b;font-size:8pt;margin-bottom:3px}
+.section-title{font-size:10pt;font-weight:700;color:#176b4b;margin:0 0 7px}
+table{width:100%;border-collapse:collapse;margin:0 0 15px}
+td{padding:7px 9px;border-bottom:1px solid #e2e8e4;vertical-align:top}
+td:first-child{width:35%;color:#65736b}
+.amount-box{background:#eef5f1;border:1px solid #d6e5dc;border-radius:5px;padding:13px 15px;margin:17px 0}
+.amount-label{font-size:8pt;color:#65736b;font-weight:700;letter-spacing:.5px}
+.amount-value{font-size:23pt;font-weight:700;color:#176b4b;margin-top:3px}
+.notes{margin-top:12px;font-size:9pt}
+.signature{display:flex;justify-content:space-between;gap:35px;margin-top:35px}
+.signature div{width:45%;border-top:1px solid #8a978f;padding-top:6px;font-size:8pt;color:#65736b}
+.footer{border-top:1px solid #e2e8e4;margin-top:22px;padding-top:8px;text-align:center;color:#849087;font-size:7.5pt}
+.receipt{page-break-before:always;break-before:page;padding-top:5px}
+.receipt h2{font-size:14pt;color:#176b4b;margin-bottom:12px}
+.receipt img{display:block;max-width:100%;max-height:245mm;object-fit:contain;margin:8px auto}
+.muted{color:#718078;font-size:9pt}
+</style>
+</head>
+<body>
+<header class="header">
+  <div class="brand">${htmlEscape(projectName)}</div>
+  ${location?`<div class="location">${htmlEscape(location)}</div>`:''}
+  <div class="heading">PAYMENT RECEIPT</div>
+  <div class="subheading">Construction project payment record</div>
+</header>
+
+<div class="meta">
+  <div><strong>RECEIPT / PAYMENT NO.</strong>${htmlEscape(payment.voucherNumber||id||'—')}</div>
+  <div><strong>PAYMENT DATE</strong>${htmlEscape(date)}</div>
+</div>
+
+<div class="section-title">PAYMENT DETAILS</div>
+<table>
+  ${detailRows.map(([label,value])=>`<tr><td>${htmlEscape(label)}</td><td>${htmlEscape(value)}</td></tr>`).join('')}
+</table>
+
+<div class="amount-box">
+  <div class="amount-label">TOTAL AMOUNT PAID</div>
+  <div class="amount-value">${amount}</div>
+</div>
+
+${payment.notes?`<div class="notes"><strong>Notes:</strong> ${htmlEscape(payment.notes)}</div>`:''}
+
+<div class="signature">
+  <div>Paid / Received acknowledgement</div>
+  <div>Authorised signature</div>
+</div>
+
+<div class="footer">
+  ${htmlEscape(projectName)} · Computer-generated payment record
+  <br/>This document records information entered in the project app; it is not a recipient-issued tax invoice.
+</div>
+
+${evidence}
+</body>
+</html>`;
+
+  await sharePdf(html,`Payment receipt ${id||payment.voucherNumber||''}`);
 }
 export async function exportPaymentStatementPdf(payments:ProjectRecord[],contracts:ProjectRecord[],sheets:any={},includeImages=false,allPayments:ProjectRecord[]=payments):Promise<void>{
   const setup=sheets?.project_setup?.values||[];const setting=(pattern:RegExp)=>String(setup.slice(1).find((row:any[])=>pattern.test(String(row?.[0]||'')))?.[1]||'').trim();const projectName=setting(/project name|owner/i)||'KSK House Construction';const location=setting(/location|site address/i);
