@@ -31,6 +31,49 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Receipt images are stored as compressed Base64 in Firestore.
+    // Members can view them; only the project owner can upload or delete them.
+    match /projects/{projectId}/bills/{recordId}/images/{imageId} {
+      allow read: if hasProjectAccess(projectId);
+
+      allow create: if isOwner(projectId)
+        && request.resource.data.keys().hasAll([
+          'recordId', 'imageBase64', 'fileName',
+          'mimeType', 'createdBy', 'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'recordId', 'imageBase64', 'fileName',
+          'mimeType', 'createdBy', 'createdAt'
+        ])
+        && request.resource.data.recordId == recordId
+        && request.resource.data.imageBase64 is string
+        && request.resource.data.imageBase64.size() <= 450000
+        && request.resource.data.fileName is string
+        && request.resource.data.mimeType == 'image/jpeg'
+        && request.resource.data.createdBy == 'owner'
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if isOwner(projectId)
+        && request.resource.data.keys().hasAll([
+          'recordId', 'imageBase64', 'fileName',
+          'mimeType', 'createdBy', 'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'recordId', 'imageBase64', 'fileName',
+          'mimeType', 'createdBy', 'createdAt'
+        ])
+        && request.resource.data.recordId == recordId
+        && request.resource.data.recordId == resource.data.recordId
+        && request.resource.data.imageBase64 is string
+        && request.resource.data.imageBase64.size() <= 450000
+        && request.resource.data.fileName is string
+        && request.resource.data.mimeType == 'image/jpeg'
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if isOwner(projectId);
+    }
+
     match /projects/{projectId}/activity/{activityId} {
       allow read: if hasProjectAccess(projectId);
 

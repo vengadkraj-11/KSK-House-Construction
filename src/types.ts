@@ -5,6 +5,7 @@ export type SheetDocument = {
   range: string;
   values: any[][];
   formulas: string[][];
+  recordIds?: string[];
   updatedAt?: any;
   updatedBy?: string;
 };

@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query,
-  serverTimestamp, setDoc, writeBatch
+  serverTimestamp, setDoc, updateDoc, writeBatch
 } from 'firebase/firestore';
 
 import {db} from '../firebase';
@@ -45,6 +45,23 @@ function decodeSheet(data: any): SheetDocument {
   } as SheetDocument;
 }
 
+function makeRecordIds(values: any[][], existing: string[] = []) {
+  return (values || []).map((_, index) => {
+    if (index === 0) return '';
+    return existing[index] || `record_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  });
+}
+
+export async function ensureSheetRecordIds(sheetId: string, sheet: SheetDocument) {
+  if (!db) return;
+  const values = sheet.values || [];
+  const existing = sheet.recordIds || [];
+  if (existing.length === values.length && existing.every((id, index) => index === 0 || !!id)) return;
+
+  const recordIds = makeRecordIds(values, existing);
+  await updateDoc(sheetPath(sheetId), {recordIds});
+}
+
 export function subscribeSheets(
   onChange: (sheets: SheetMap, count: number) => void,
   onError: (message: string) => void
@@ -81,7 +98,10 @@ export async function seedWorkbook(uid: string) {
 
   Object.entries(LOCAL_WORKBOOK).forEach(([id, sheet]) => {
     batch.set(sheetPath(id), {
-      ...encodeSheet(sheet),
+      ...encodeSheet({
+        ...sheet,
+        recordIds: makeRecordIds(sheet.values || [])
+      }),
       updatedAt: serverTimestamp(),
       updatedBy: uid,
       importedFrom: 'KSK_House_Cost.xlsx',

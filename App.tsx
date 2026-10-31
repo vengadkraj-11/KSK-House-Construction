@@ -13,11 +13,12 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {onAuthStateChanged, signInWithEmailAndPassword, signOut, User} from 'firebase/auth';
 import {collection, doc, getDoc, onSnapshot} from 'firebase/firestore';
+import BillAttachments from './src/components/BillAttachments';
 import {auth, db, isFirebaseConfigured} from './src/firebase';
 import {LOCAL_WORKBOOK, SHEET_ORDER, SHEET_TITLES, ICONS, headersForSheet, meaningfulRows, displayCell, excelSerialToDate, dateToExcelSerial} from './src/data';
 import {calculateDashboard, calculateFloorSummary, countMaterials} from './src/services/calculations';
 import {enableNotifications, showActivityNotification} from './src/services/notifications';
-import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuoteSheet} from './src/services/projectSync';
+import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuoteSheet, ensureSheetRecordIds} from './src/services/projectSync';
 import {ActivityItem, Role, SheetDocument, SheetMap} from './src/types';
 
 const C = {
@@ -286,7 +287,7 @@ function titleIndex(headers: string[], candidates: string[]) {
   return headers.findIndex(h => candidates.some(c => h.toLowerCase().includes(c)));
 }
 
-function RecordCard({sheetId, sheet, row, rowIndex, canEdit, canDelete, onEdit, onDelete, language}: any) {
+function RecordCard({sheetId, sheet, row, rowIndex, recordId, canEdit, canDelete, onEdit, onDelete, language}: any) {
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   const headers = headersForSheet(sheetId, sheet);
   const primaryIndex = titleIndex(headers, ['material / item', 'item / description', 'construction activity', 'service / fee head', 'expense / equipment', 'labour / contractor work', 'cost head', 'setting']);
@@ -316,6 +317,9 @@ function RecordCard({sheetId, sheet, row, rowIndex, canEdit, canDelete, onEdit, 
       {info.slice(2).map((item, i) => <Pill key={i}>{item}</Pill>)}
       {formulaCount ? <Pill color={C.goldBg} textColor={C.gold}>{language === 'ta' ? `${formulaCount} கணக்கீட்டு புலங்கள்` : `${formulaCount} formula field${formulaCount > 1 ? 's' : ''}`}</Pill> : null}
     </View> : null}
+    {sheetId === 'daily_expenses' && recordId && db ? (
+      <BillAttachments recordId={recordId} canEdit={canEdit} language={language}/>
+    ) : null}
   </View>;
 }
 
@@ -459,7 +463,7 @@ function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDe
         </View> : null}
       </> : null}
 
-      {filteredRecords.length ? filteredRecords.map(({row, index}: any) => <RecordCard key={`${sheetId}-${index}`} language={language} sheetId={sheetId} sheet={sheet} row={row} rowIndex={index} canEdit={!readOnly} canDelete={!readOnly && ['daily_expenses', 'materials_ground', 'materials_first', 'materials_boq', 'work_schedule', 'labour_work'].includes(sheetId)} onEdit={onEdit} onDelete={onDelete} />) : !['project_dashboard', 'floor_summary'].includes(sheetId) ? <View style={cardStyle()}><Text style={{color: C.muted, fontSize: 13}}>{searchText || Object.values(filters).some(Boolean) ? t('No records match your search or filters.', 'உங்கள் தேடல் அல்லது வடிகட்டிகளுக்குப் பொருத்தமான பதிவுகள் இல்லை.') : t('No records entered yet.', 'இதுவரை பதிவுகள் எதுவும் சேர்க்கப்படவில்லை.')}</Text></View> : null}
+      {filteredRecords.length ? filteredRecords.map(({row, index}: any) => <RecordCard key={`${sheetId}-${index}`} language={language} sheetId={sheetId} sheet={sheet} row={row} rowIndex={index} recordId={sheet.recordIds?.[index]} canEdit={!readOnly} canDelete={!readOnly && ['daily_expenses', 'materials_ground', 'materials_first', 'materials_boq', 'work_schedule', 'labour_work'].includes(sheetId)} onEdit={onEdit} onDelete={onDelete} />) : !['project_dashboard', 'floor_summary'].includes(sheetId) ? <View style={cardStyle()}><Text style={{color: C.muted, fontSize: 13}}>{searchText || Object.values(filters).some(Boolean) ? t('No records match your search or filters.', 'உங்கள் தேடல் அல்லது வடிகட்டிகளுக்குப் பொருத்தமான பதிவுகள் இல்லை.') : t('No records entered yet.', 'இதுவரை பதிவுகள் எதுவும் சேர்க்கப்படவில்லை.')}</Text></View> : null}
     </ScrollView>
   </View>;
 }
@@ -720,7 +724,15 @@ function makeFormulaRow(sheetId: string, excelRow: number, width: number) {
 }
 
 function appendedSheet(sheetId: string, sheet: SheetDocument): {next: SheetDocument; rowIndex: number} {
-  const next: SheetDocument = {...sheet, values: sheet.values.map(r => [...r]), formulas: sheet.formulas.map(r => [...r])};
+  const next: SheetDocument = {
+    ...sheet,
+    values: sheet.values.map(r => [...r]),
+    formulas: sheet.formulas.map(r => [...r]),
+    recordIds: [...(sheet.recordIds || Array(sheet.values.length).fill(''))]
+  };
+  while (next.recordIds!.length < next.values.length) {
+    next.recordIds!.push(`record_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
+  }
   const width = Math.max(next.values[0]?.length || 0, 1);
   const row = Array(width).fill(null);
   const headers = headersForSheet(sheetId, sheet);
@@ -732,6 +744,7 @@ function appendedSheet(sheetId: string, sheet: SheetDocument): {next: SheetDocum
   if (sheetId === 'quotation_compare') row[0] = '';
   next.values.push(row);
   next.formulas.push(makeFormulaRow(sheetId, next.values.length, width));
+  next.recordIds!.push(`record_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
   if (sheetId === 'professional_fees' && next.formulas[2]) {
     // Keep the original payment roll-up formula but extend it to include appended payment rows.
     next.formulas[2][9] = `=SUM(H4:H${next.values.length})`;
@@ -934,6 +947,16 @@ export default function App() {
     const stopSheets = subscribeSheets((remote, count) => {
       setCloudCount(count);
       setSheets(current => ({...current, ...remote}));
+      if (role === 'owner') {
+        Object.entries(remote).forEach(([id, sheet]) => {
+          if (!sheet.recordIds || sheet.recordIds.length !== (sheet.values || []).length ||
+              (sheet.recordIds || []).some((recordId, index) => index > 0 && !recordId)) {
+            void ensureSheetRecordIds(id, sheet).catch(error => {
+              console.warn('Could not initialise expense record IDs:', error?.message || error);
+            });
+          }
+        });
+      }
       setSyncState('LIVE SYNC');
     }, () => setSyncState('SYNC ERROR'));
     // Ignore the initial activity snapshot to avoid notifying old updates.
@@ -1054,6 +1077,10 @@ export default function App() {
 
             next.values.splice(rowIndex, 1);
             next.formulas.splice(rowIndex, 1);
+            if (next.recordIds) {
+              next.recordIds = [...next.recordIds];
+              next.recordIds.splice(rowIndex, 1);
+            }
 
             try {
               setSyncState('SAVING');
