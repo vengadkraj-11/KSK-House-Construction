@@ -212,3 +212,33 @@ export async function registerDevice(
     {merge: true}
   );
 }
+
+
+// Clear activity history using Firestore owner-only delete rules.
+// Worksheets, expenses, bills and attachments are not deleted.
+export async function clearActivityHistory(): Promise<number> {
+  if (!db) throw new Error('Firebase is not configured.');
+
+  const activityCollection = collection(
+    db, 'projects', PROJECT_ID, 'activity'
+  );
+
+  let deletedCount = 0;
+
+  while (true) {
+    const snapshot = await getDocs(
+      query(activityCollection, limit(450))
+    );
+
+    if (snapshot.empty) break;
+
+    const batch = writeBatch(db);
+
+    snapshot.docs.forEach(item => batch.delete(item.ref));
+
+    await batch.commit();
+    deletedCount += snapshot.size;
+  }
+
+  return deletedCount;
+}

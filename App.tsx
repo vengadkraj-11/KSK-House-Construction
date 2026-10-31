@@ -18,7 +18,7 @@ import {auth, db, isFirebaseConfigured} from './src/firebase';
 import {LOCAL_WORKBOOK, SHEET_ORDER, SHEET_TITLES, ICONS, headersForSheet, meaningfulRows, displayCell, excelSerialToDate, dateToExcelSerial} from './src/data';
 import {calculateDashboard, calculateFloorSummary, countMaterials} from './src/services/calculations';
 import {enableNotifications, showActivityNotification} from './src/services/notifications';
-import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuoteSheet, ensureSheetRecordIds} from './src/services/projectSync';
+import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuoteSheet, ensureSheetRecordIds, clearActivityHistory} from './src/services/projectSync';
 import {ActivityItem, Role, SheetDocument, SheetMap} from './src/types';
 
 const C = {
@@ -753,11 +753,31 @@ function appendedSheet(sheetId: string, sheet: SheetDocument): {next: SheetDocum
 }
 
 
-function ActivityScreen({activities, language}: any) {
+function formatActivityDate(value: any): string {
+  if (!value) return '—';
+
+  let date: Date;
+
+  if (typeof value?.toDate === 'function') {
+    date = value.toDate();
+  } else {
+    date = new Date(value);
+  }
+
+  if (Number.isNaN(date.getTime())) return '—';
+
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit'
+  })}`;
+}
+
+function ActivityScreen({activities, language, canClear, onClear}: any) {
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
 
   const translatedChange = (value: string) => {
     if (language !== 'ta') return value;
+
     const labels: Record<string, string> = {
       CREATE: 'உருவாக்கம்',
       UPDATE: 'புதுப்பிப்பு',
@@ -766,7 +786,29 @@ function ActivityScreen({activities, language}: any) {
       EDIT: 'திருத்தம்',
       IMPORT: 'இறக்குமதி'
     };
+
     return labels[value] || value;
+  };
+
+  const confirmClear = () => {
+    Alert.alert(
+      t('Clear activity history?', 'செயல்பாட்டு வரலாற்றை அழிக்கவா?'),
+      t(
+        'This permanently deletes all project activity history. Construction worksheets, expenses, payments, bills and attachments will not be deleted.',
+        'இது திட்டத்தின் அனைத்து செயல்பாட்டு வரலாற்றையும் நிரந்தரமாக நீக்கும். கட்டுமானப் பணித்தாள்கள், செலவுகள், பணப்பரிவர்த்தனைகள், ரசீதுகள் மற்றும் இணைப்புகள் நீக்கப்படாது.'
+      ),
+      [
+        {
+          text: t('Cancel', 'ரத்துசெய்'),
+          style: 'cancel'
+        },
+        {
+          text: t('Clear history', 'வரலாற்றை அழி'),
+          style: 'destructive',
+          onPress: () => onClear()
+        }
+      ]
+    );
   };
 
   return (
@@ -775,12 +817,31 @@ function ActivityScreen({activities, language}: any) {
         <Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>
           {t('Project notifications', 'திட்ட அறிவிப்புகள்')}
         </Text>
+
         <Text style={{fontSize: 12, lineHeight: 18, color: C.muted, marginTop: 5}}>
           {t(
             'Construction changes made by the owner appear here.',
             'உரிமையாளர் செய்யும் கட்டுமான மாற்றங்கள் இங்கே தோன்றும்.'
           )}
         </Text>
+
+        {canClear && activities.length > 0 ? (
+          <TouchableOpacity
+            onPress={confirmClear}
+            style={{
+              backgroundColor: C.redBg,
+              padding: 12,
+              borderRadius: 10,
+              marginTop: 14,
+              borderWidth: 1,
+              borderColor: '#EBCBC7'
+            }}
+          >
+            <Text style={{color: C.red, fontWeight: '800', textAlign: 'center'}}>
+              {t('Clear all activity history', 'அனைத்து செயல்பாட்டு வரலாற்றையும் அழி')}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {activities.length ? activities.map((a: ActivityItem) => (
@@ -797,6 +858,10 @@ function ActivityScreen({activities, language}: any) {
             {t('Changed by:', 'மாற்றியவர்:')} {a.actorName || t('Project owner', 'திட்ட உரிமையாளர்')}
           </Text>
 
+          <Text style={{fontSize: 12, color: C.muted, marginTop: 4}}>
+            {t('Date & time:', 'தேதி மற்றும் நேரம்:')} {formatActivityDate(a.createdAt)}
+          </Text>
+
           <Text style={{fontSize: 12, lineHeight: 19, color: C.ink, marginTop: 8}}>
             {a.details || a.body || t('New construction data is available.', 'புதிய கட்டுமானத் தகவல்கள் உள்ளன.')}
           </Text>
@@ -811,7 +876,6 @@ function ActivityScreen({activities, language}: any) {
     </ScrollView>
   );
 }
-
 
 function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed, onNotifications, onSignOut, onOriginal, language, onLanguageChange, onExportExcel, onExportPdf}: any) {
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
@@ -1314,6 +1378,27 @@ export default function App() {
   const selectedData = selectedSheet ? (sheets[selectedSheet] || (selectedSheet === 'quotation_compare' ? undefined : undefined)) : undefined;
   const recordsCount = selectedData ? meaningfulRows(selectedData).length : 0;
 
+  const handleClearActivity = async () => {
+    if (!canEdit || !user || demoMode) return;
+
+    try {
+      const deletedCount = await clearActivityHistory();
+
+      Alert.alert(
+        language === 'ta' ? 'வரலாறு அழிக்கப்பட்டது' : 'History cleared',
+        language === 'ta'
+          ? `${deletedCount} செயல்பாட்டு பதிவுகள் அழிக்கப்பட்டன.`
+          : `${deletedCount} activity records were deleted.`
+      );
+    } catch (error: any) {
+      Alert.alert(
+        language === 'ta' ? 'அழிக்க முடியவில்லை' : 'Could not clear history',
+        error?.message || 'Please try again.'
+      );
+    }
+  };
+
+
   const headerSubtitle = screen === 'Dashboard'
     ? (language === 'ta' ? 'திட்ட மேலோட்டம்' : 'Project overview')
     : screen === 'Sheets'
@@ -1337,7 +1422,7 @@ export default function App() {
     }
     if (screen === 'Expenses') return <View style={{flex:1}}><SheetView sheetId="daily_expenses" sheet={sheets.daily_expenses} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('daily_expenses', index)} onAdd={() => startAdd('daily_expenses')} onDelete={(index: number) => deleteRecord('daily_expenses', index)} /></View>;
     if (screen === 'Progress') return <View style={{flex:1}}><SheetView sheetId="work_schedule" sheet={sheets.work_schedule} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('work_schedule', index)} onAdd={() => startAdd('work_schedule')} onDelete={(index: number) => deleteRecord('work_schedule', index)} /></View>;
-    if (screen === 'Activity') return <ActivityScreen activities={activities} language={language}/>;
+    if (screen === 'Activity') return <ActivityScreen activities={activities} language={language} canClear={canEdit} onClear={handleClearActivity}/>;
     return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} language={language} onLanguageChange={changeLanguage} onExportExcel={exportExcel} onExportPdf={exportPdf}/>;
   };
 
