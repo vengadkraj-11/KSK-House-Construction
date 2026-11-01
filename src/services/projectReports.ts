@@ -8,7 +8,7 @@ import {db} from '../firebase';
 import {renderReceiptSection} from './reportReceipts';
 import {ProjectRecord} from './projectRecords';
 import {summarizeContracts, summarizeInventory} from './recordMath';
-import {summarizePaymentRecords} from './paymentMath';
+import {paymentStatementLedger, summarizePaymentRecords} from './paymentMath';
 
 type Records=Record<string,ProjectRecord[]>;
 const amount=(row:ProjectRecord)=>Number(row.amount)||0;
@@ -103,14 +103,51 @@ const htmlEscape=(value:any)=>String(value??'Not provided').replace(/[&<>"']/g,c
 const paymentMoney=(value:any,currency='₹')=>`${htmlEscape(currency)} ${(Number(value)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 const blank=(value:any)=>value===undefined||value===null||String(value).trim()===''?'Not provided':String(value);
 async function receiptImages(payment:ProjectRecord){
-  if(!db)return [] as {voucher:string;payment:string;image:string;filename:string}[];
+  if(!db || !payment.sourceExpenseId)
+    return [] as {voucher:string;payment:string;image:string;filename:string}[];
+
   const images=[] as {voucher:string;payment:string;image:string;filename:string}[];
-  const recordIds=[payment.id,payment.sourceExpenseId].filter((id,index,all):id is string=>!!id&&all.indexOf(id)===index);
-  for(const recordId of recordIds){
-    const snapshot=await getDocs(query(collection(db,'projects','ksk','bills',recordId,'images'),limit(20)));
-    snapshot.docs.forEach(imageDoc=>{const data=imageDoc.data();if(data.mimeType==='image/jpeg'&&typeof data.imageBase64==='string'&&data.imageBase64)images.push({voucher:String(payment.voucherNumber||''),payment:`${payment.paymentId||payment.id} · ${payment.date||''}`,image:data.imageBase64,filename:String(data.fileName||imageDoc.id)});});
-  }
+  const recordId=String(payment.sourceExpenseId);
+
+  const snapshot=await getDocs(
+    query(collection(db,'projects','ksk','bills',recordId,'images'),limit(20))
+  );
+
+  snapshot.docs.forEach(imageDoc=>{
+    const data=imageDoc.data();
+
+    if(data.mimeType==='image/jpeg' &&
+       typeof data.imageBase64==='string' && data.imageBase64){
+      images.push({
+        voucher:String(payment.voucherNumber||''),
+        payment:`${payment.paymentId||payment.id} · ${payment.date||''}`,
+        image:data.imageBase64,
+        filename:String(data.fileName||imageDoc.id)
+      });
+    }
+  });
+
   return images;
+}
+
+async function receiptImagesForPayments(payments:ProjectRecord[]){
+  const result=[] as {voucher:string;payment:string;image:string;filename:string}[];
+  const seen=new Set<string>();
+
+  for(const payment of payments){
+    if(!payment.sourceExpenseId) continue;
+
+    const images=await receiptImages(payment);
+
+    for(const item of images){
+      const key=`${payment.sourceExpenseId}|${item.filename}|${item.image.slice(0,100)}`;
+      if(seen.has(key)) continue;
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  return result;
 }
 async function sharePdf(html:string,title:string){
   const result=await Print.printToFileAsync({html});
@@ -118,44 +155,28 @@ async function sharePdf(html:string,title:string){
   await Sharing.shareAsync(result.uri,{mimeType:'application/pdf',dialogTitle:title});
 }
 function pdfStyles(){return `<style>@page{size:A4;margin:16mm}body{font:10pt Arial,sans-serif;color:#18352b;line-height:1.4}header{border-bottom:3px solid #176b4b;padding-bottom:12px;margin-bottom:18px}h1{font-size:20pt;margin:0 0 4px}h2{font-size:13pt;color:#176b4b;margin:18px 0 7px}table{border-collapse:collapse;width:100%;table-layout:fixed;margin:8px 0 16px}th,td{border:1px solid #ccd8d0;padding:7px;text-align:left;overflow-wrap:anywhere}th{background:#e6f1ec;width:28%}.amount{font-size:19pt;font-weight:bold;color:#176b4b}.footer{position:fixed;bottom:0;border-top:1px solid #ccd8d0;padding-top:5px;width:100%;font-size:8pt;color:#718078}.receipt{page-break-before:always}.receipt img{display:block;max-width:100%;max-height:245mm;object-fit:contain;margin:14px auto}.muted{color:#718078}</style>`;}
-export async function exportPaymentReceiptPdf(payment:ProjectRecord,sheets:any={}):Promise<void>{
+export async function exportPaymentReceiptPdf(payment:ProjectRecord,sheets:any={},allPayments:ProjectRecord[]= [payment],contracts:ProjectRecord[]=[]):Promise<void>{
   const setup=sheets?.project_setup?.values||[];
   const setting=(pattern:RegExp)=>String(setup.slice(1).find((row:any[])=>pattern.test(String(row?.[0]||'')))?.[1]||'').trim();
-  const projectName=setting(/project name|owner/i)||'KSK House Construction';
+  const projectName='KSK CONSTRUCTION';
   const location=setting(/location|site address/i);
   const currency=String(payment.currency||'₹');
   const id=String(payment.paymentId||payment.id||'');
-  const date=blank(payment.date);
+  const {history:ordered,agreedAmount:agreed,totalPaid,remainingBalance:balance}=paymentStatementLedger(payment,allPayments,contracts);
   const recipient=blank(payment.paymentTo||payment.person);
-  const description=blank(payment.description);
-  const category=blank(payment.category);
-  const mode=blank(payment.method);
-  const reference=blank(payment.paymentReference||payment.reference);
-  const amount=paymentMoney(payment.amount,currency);
 
   let images:{voucher:string;payment:string;image:string;filename:string}[]=[];
   let imageError='';
   try{
-    images=await receiptImages(payment);
+    images=await receiptImagesForPayments(ordered);
   }catch(error:any){
     imageError=error?.code==='permission-denied'
       ?'Receipt image access denied.'
       :error?.message||'Receipt images could not be loaded.';
   }
 
-  const detailRows=[
-    ['Payment date',date],
-    ['Voucher / bill number',blank(payment.voucherNumber)],
-    ['Paid to',recipient],
-    ['Description',description],
-    ['Expense category',category],
-    ['Floor / area',blank(payment.floor)],
-    ['Work stage',blank(payment.stage)],
-    ['Payment method',mode],
-    ['Transaction reference',reference],
-    ['Paid by',blank(payment.paidBy)],
-    ['Received by',blank(payment.receivedBy)]
-  ].filter(([,value])=>value!=='Not provided');
+  const detailRows=[['Payment to',recipient],['Payment by',blank(payment.paidBy)],['Payment mode',blank(payment.method)],['Agreed amount',agreed===null?'Not provided':paymentMoney(agreed,currency)]];
+  const transactionRows=ordered.map(row=>`<tr><td>${htmlEscape(blank(row.date))}</td><td>${htmlEscape(blank(row.description))}</td><td class="money">${paymentMoney(row.amount,String(row.currency||currency))}</td></tr>`).join('');
 
   const evidence=images.length
     ? `<section class="receipt"><h2>Bill / Receipt Attachment</h2>${renderReceiptSection(images)}</section>`
@@ -179,7 +200,7 @@ body{font-family:Arial,Helvetica,sans-serif;color:#26352e;font-size:10pt;line-he
 .meta strong{display:block;color:#65736b;font-size:8pt;margin-bottom:3px}
 .section-title{font-size:10pt;font-weight:700;color:#176b4b;margin:0 0 7px}
 table{width:100%;border-collapse:collapse;margin:0 0 15px}
-td{padding:7px 9px;border-bottom:1px solid #e2e8e4;vertical-align:top}
+td{padding:7px 9px;border-bottom:1px solid #e2e8e4;vertical-align:top}.money{text-align:right;white-space:nowrap}table.history{font-size:9pt}table.history th{background:#e6f1ec;color:#26352e;text-align:left;padding:8px}table.history td{border:1px solid #e2e8e4}
 td:first-child{width:35%;color:#65736b}
 .amount-box{background:#eef5f1;border:1px solid #d6e5dc;border-radius:5px;padding:13px 15px;margin:17px 0}
 .amount-label{font-size:8pt;color:#65736b;font-weight:700;letter-spacing:.5px}
@@ -198,52 +219,194 @@ td:first-child{width:35%;color:#65736b}
 <header class="header">
   <div class="brand">${htmlEscape(projectName)}</div>
   ${location?`<div class="location">${htmlEscape(location)}</div>`:''}
-  <div class="heading">PAYMENT RECEIPT</div>
-  <div class="subheading">Construction project payment record</div>
+  <div class="heading">PAYMENT STATEMENT</div>
 </header>
-
-<div class="meta">
-  <div><strong>RECEIPT / PAYMENT NO.</strong>${htmlEscape(payment.voucherNumber||id||'—')}</div>
-  <div><strong>PAYMENT DATE</strong>${htmlEscape(date)}</div>
-</div>
-
-<div class="section-title">PAYMENT DETAILS</div>
+<div class="section-title">PAYMENT INFORMATION</div>
 <table>
   ${detailRows.map(([label,value])=>`<tr><td>${htmlEscape(label)}</td><td>${htmlEscape(value)}</td></tr>`).join('')}
 </table>
-
-<div class="amount-box">
-  <div class="amount-label">TOTAL AMOUNT PAID</div>
-  <div class="amount-value">${amount}</div>
-</div>
-
-${payment.notes?`<div class="notes"><strong>Notes:</strong> ${htmlEscape(payment.notes)}</div>`:''}
-
-<div class="signature">
-  <div>Paid / Received acknowledgement</div>
-  <div>Authorised signature</div>
-</div>
-
-<div class="footer">
-  ${htmlEscape(projectName)} · Computer-generated payment record
-  <br/>This document records information entered in the project app; it is not a recipient-issued tax invoice.
-</div>
+<div class="section-title">PAYMENT HISTORY</div>
+<table class="history"><thead><tr><th>Date</th><th>Description</th><th class="money">Amount</th></tr></thead><tbody>${transactionRows||'<tr><td colspan="3">No saved payments</td></tr>'}</tbody></table>
+<div class="amount-box"><div>Agreed amount: <strong>${agreed===null?'Not provided':paymentMoney(agreed,currency)}</strong></div><div>Total paid: <strong>${paymentMoney(totalPaid,currency)}</strong></div><div>Remaining balance: <strong>${balance===null?'Not provided':paymentMoney(balance,currency)}</strong></div></div>
+<div class="footer">${htmlEscape(projectName)} · Payment statement</div>
 
 ${evidence}
 </body>
 </html>`;
 
-  await sharePdf(html,`Payment receipt ${id||payment.voucherNumber||''}`);
+  await sharePdf(html,`Payment statement ${id}`);
 }
-export async function exportPaymentStatementPdf(payments:ProjectRecord[],contracts:ProjectRecord[],sheets:any={},includeImages=false,allPayments:ProjectRecord[]=payments):Promise<void>{
-  const setup=sheets?.project_setup?.values||[];const setting=(pattern:RegExp)=>String(setup.slice(1).find((row:any[])=>pattern.test(String(row?.[0]||'')))?.[1]||'').trim();const projectName=setting(/project name|owner/i)||'KSK House Construction';const location=setting(/location|site address/i);
-  const ordered=[...payments].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));const total=ordered.reduce((sum,row)=>sum+(Number(row.amount)||0),0);const allPaid=allPayments.reduce((sum,row)=>sum+(Number(row.amount)||0),0);const advances=ordered.filter(row=>String(row.paymentKind||'').toLowerCase()==='advance').reduce((sum,row)=>sum+(Number(row.amount)||0),0);const linked=ordered.filter(row=>row.sourceExpenseId).reduce((sum,row)=>sum+(Number(row.amount)||0),0);const independent=ordered.filter(row=>!row.sourceExpenseId).reduce((sum,row)=>sum+(Number(row.amount)||0),0);const partial=ordered.filter(row=>String(row.status||'').toLowerCase()==='partially-paid'||row.partialPayment===true).length;const contractTotal=contracts.reduce((sum,row)=>sum+(Number(row.agreedAmount)||0),0);
-  const period=ordered.length?`${ordered[0].date||'—'} to ${ordered[ordered.length-1].date||'—'}`:'No payments in selected period';
-  const transactionRows=ordered.map(row=>`<tr>${[row.paymentId||row.id,row.date,row.voucherNumber,row.paymentTo||row.person,row.description,row.stage,row.floor,row.category,paymentMoney(row.amount,String(row.currency||'₹')),row.method,row.reference,row.contractId,row.receiptReference?'Reference recorded':'See attachments'].map(value=>`<td>${htmlEscape(blank(value))}</td>`).join('')}</tr>`).join('');
-  let evidence='';let missing=0;let errors=0;if(includeImages){for(const payment of ordered){try{const images=await receiptImages(payment);if(!images.length){missing++;continue;}evidence+=`<section class="receipt"><h2>Receipt evidence · ${htmlEscape(payment.paymentId||payment.id)}</h2><p>${htmlEscape(payment.date||'')} · Voucher ${htmlEscape(payment.voucherNumber||'Not provided')}</p>${renderReceiptSection(images)}</section>`;}catch{errors++;}}}
-  const receiptCount=ordered.filter(row=>row.receiptReference||row.receiptAttached===true||row.hasReceipt).length;
-  const reconciliation=summarizePaymentRecords(allPayments,contracts);
-  const summary=[['Report period',period],['Contract value',contractTotal?paymentMoney(contractTotal):'Not available'],['Total payments in period',paymentMoney(total)],['Advances in period',paymentMoney(advances)],['Paid to date',paymentMoney(allPaid)],['Outstanding against known contract agreements',contractTotal?paymentMoney(reconciliation.remaining):'Not available'],['Payments',String(ordered.length)],['Receipt reference coverage',`${receiptCount} of ${ordered.length}`],['Payments linked to expenses',paymentMoney(linked)],['Independent payments',paymentMoney(independent)],['Partial payments',String(partial)],['Overpayment against known agreements',paymentMoney(reconciliation.overpaid)]];
-  const html=`<html><head>${pdfStyles()}<style>table.ledger{font-size:7pt}table.ledger th,table.ledger td{padding:4px}.receipt{page-break-before:always}.receipt img{max-height:245mm}</style></head><body><header><h1>${htmlEscape(projectName)}</h1><div>${htmlEscape(location)}</div><h2 style="color:#18352b">PROJECT PAYMENT STATEMENT</h2><div>Period: ${htmlEscape(period)} · Generated ${htmlEscape(new Date().toLocaleString())}</div></header><h2>Summary and reconciliation</h2><table>${summary.map(([key,value])=>`<tr><th>${htmlEscape(key)}</th><td>${htmlEscape(value)}</td></tr>`).join('')}</table><h2>Detailed transaction ledger</h2><table class="ledger"><thead><tr>${['Payment ID','Date','Voucher','Recipient','Description','Stage','Area','Category','Amount','Mode','Transaction ref','Contract','Receipt'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${transactionRows||'<tr><td colspan="13">No payments match the selected filters.</td></tr>'}</tbody></table><p class="muted">Linked Daily Expenses are source expense records; this statement counts recorded payments once. Expense entries are not added to payment totals.</p>${includeImages?`<h2>Receipt evidence appendix</h2><p>${missing} payment(s) had no accessible receipt image; ${errors} attachment read(s) failed${errors?' and may require owner access or a network retry.':'.'}</p>${evidence}`:''}<div class="footer">${htmlEscape(projectName)} · Project Payment Statement · Generated ${htmlEscape(new Date().toLocaleString())}</div></body></html>`;
-  await sharePdf(html,'Project payment statement');
+export async function exportPaymentStatementPdf(
+  payments:ProjectRecord[],
+  contracts:ProjectRecord[],
+  sheets:any={},
+  includeImages=false,
+  allPayments:ProjectRecord[]=payments
+):Promise<void>{
+  void allPayments;
+
+  const setup=sheets?.project_setup?.values||[];
+
+  const setting=(pattern:RegExp)=>
+    String(setup.slice(1).find((row:any[])=>pattern.test(String(row?.[0]||'')))?.[1]||'').trim();
+
+  const projectName='KSK CONSTRUCTION';
+  const location=setting(/location|site address/i);
+
+  const ordered=[...payments].sort((a,b)=>
+    String(a.date||'').localeCompare(String(b.date||''))
+  );
+
+  const totalPaid=ordered.reduce(
+    (sum,row)=>sum+(Number(row.amount)||0),0
+  );
+
+  const normalize=(value:any)=>
+    String(value||'').trim().replace(/\s+/g,' ').toLowerCase();
+
+  const recipients=[...new Set(
+    ordered.map(row=>String(row.paymentTo||row.person||'').trim()).filter(Boolean)
+  )];
+
+  const contractIds=new Set(
+    ordered.map(row=>String(row.contractId||'')).filter(Boolean)
+  );
+
+  const recipientKeys=new Set(recipients.map(normalize));
+
+  const relevantContracts=contracts.filter(contract=>{
+    if(contractIds.has(String(contract.id||''))) return true;
+
+    const name=normalize(
+      contract.person||contract.paymentTo||contract.vendor||
+      contract.contractor||contract.name
+    );
+
+    return !contractIds.size && name && recipientKeys.has(name);
+  });
+
+  const agreedAmount=relevantContracts.length
+    ? relevantContracts.reduce(
+        (sum,row)=>sum+(Number(row.agreedAmount)||0),0
+      )
+    : null;
+
+  const remaining=agreedAmount===null?null:agreedAmount-totalPaid;
+
+  const uniqueValues=(values:any[])=>
+    [...new Set(
+      values.map(value=>String(value||'').trim()).filter(Boolean)
+    )].join(', ')||'Not provided';
+
+  const paymentTo=uniqueValues(
+    ordered.map(row=>row.paymentTo||row.person)
+  );
+
+  const paymentBy=uniqueValues(ordered.map(row=>row.paidBy));
+  const paymentMode=uniqueValues(ordered.map(row=>row.method));
+  const currency=String(ordered[0]?.currency||'₹');
+
+  const transactionRows=ordered.map(row=>`
+    <tr>
+      <td>${htmlEscape(blank(row.date))}</td>
+      <td>${htmlEscape(blank(row.description))}</td>
+      <td class="money">${paymentMoney(row.amount,String(row.currency||currency))}</td>
+    </tr>
+  `).join('');
+
+  let images:{voucher:string;payment:string;image:string;filename:string}[]=[];
+  let imageError='';
+
+  if(includeImages){
+    try{
+      images=await receiptImagesForPayments(ordered);
+    }catch(error:any){
+      imageError=error?.code==='permission-denied'
+        ?'Receipt image access denied.'
+        :error?.message||'Receipt images could not be loaded.';
+    }
+  }
+
+  const evidence=!includeImages
+    ?''
+    :images.length
+      ?`<section class="receipt">
+          <h2>DAILY EXPENSE BILLS / RECEIPTS</h2>
+          ${renderReceiptSection(images)}
+        </section>`
+      :`<section class="receipt">
+          <h2>DAILY EXPENSE BILLS / RECEIPTS</h2>
+          <p class="muted">${htmlEscape(imageError||'No linked expense receipt images found.')}</p>
+        </section>`;
+
+  const html=`<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+@page{size:A4;margin:15mm}
+*{box-sizing:border-box}
+body{font-family:Arial,Helvetica,sans-serif;color:#26352e;font-size:10pt;line-height:1.45;margin:0}
+.header{text-align:center;border-bottom:2px solid #176b4b;padding-bottom:13px;margin-bottom:20px}
+.brand{font-size:20pt;font-weight:700;color:#176b4b;margin-bottom:4px}
+.location{font-size:9pt;color:#65736b}
+.heading{font-size:15pt;font-weight:700;margin-top:15px}
+.section-title{font-size:10pt;font-weight:700;color:#176b4b;margin:18px 0 7px}
+table{width:100%;border-collapse:collapse;margin-bottom:15px}
+td,th{padding:8px;border:1px solid #dce5df;text-align:left;vertical-align:top}
+th{background:#e6f1ec}
+.money{text-align:right;white-space:nowrap}
+table.history{font-size:9.5pt}
+table.history th:last-child,table.history td:last-child{text-align:right}
+.amount-box{border:1px solid #d6e5dc;background:#eef5f1;border-radius:5px;padding:13px 15px;margin-top:18px}
+.amount-row{display:flex;justify-content:space-between;padding:5px 0}
+.amount-row.total{font-size:12pt;font-weight:700;color:#176b4b;border-top:1px solid #c8dacf;margin-top:5px;padding-top:10px}
+.footer{border-top:1px solid #e2e8e4;margin-top:25px;padding-top:8px;text-align:center;color:#849087;font-size:8pt}
+.receipt{page-break-before:always;break-before:page;padding-top:5px}
+.receipt h2{font-size:14pt;color:#176b4b}
+.receipt img{display:block;max-width:100%;max-height:245mm;object-fit:contain;margin:8px auto}
+.muted{color:#718078;font-size:9pt}
+</style>
+</head>
+<body>
+<header class="header">
+  <div class="brand">${htmlEscape(projectName)}</div>
+  ${location?`<div class="location">${htmlEscape(location)}</div>`:''}
+  <div class="heading">PAYMENT STATEMENT</div>
+</header>
+
+<div class="section-title">PAYMENT INFORMATION</div>
+<table>
+<tr><td>Payment to</td><td>${htmlEscape(paymentTo)}</td></tr>
+<tr><td>Payment by</td><td>${htmlEscape(paymentBy)}</td></tr>
+<tr><td>Payment mode</td><td>${htmlEscape(paymentMode)}</td></tr>
+</table>
+
+<div class="section-title">PAYMENT HISTORY</div>
+<table class="history">
+<thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
+<tbody>${transactionRows||'<tr><td colspan="3">No payments found.</td></tr>'}</tbody>
+</table>
+
+<div class="amount-box">
+<div class="amount-row">
+  <span>Total paid</span>
+  <strong>${paymentMoney(totalPaid,currency)}</strong>
+</div>
+<div class="amount-row">
+  <span>Agreed amount</span>
+  <strong>${agreedAmount===null?'Not provided':paymentMoney(agreedAmount,currency)}</strong>
+</div>
+<div class="amount-row total">
+  <span>Remaining balance</span>
+  <strong>${remaining===null?'Not provided':paymentMoney(remaining,currency)}</strong>
+</div>
+</div>
+
+<div class="footer">${htmlEscape(projectName)} · Payment statement</div>
+${evidence}
+</body>
+</html>`;
+
+  await sharePdf(html,'KSK Construction payment statement');
 }

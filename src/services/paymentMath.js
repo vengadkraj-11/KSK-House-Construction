@@ -27,4 +27,55 @@ function summarizePaymentRecords(payments = [], contracts = []) {
   });
   return { paid, advances, contractValue, remaining: linked.reduce((sum,item)=>sum+item.remaining,0), overpaid: linked.reduce((sum,item)=>sum+item.overpaid,0), count: payments.length };
 }
-module.exports = { paymentIdForDocument, isDuplicatePaymentRetry, validatePaymentRecord, summarizePaymentRecords };
+function normalizedPaymentParty(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function paymentStatementLedger(payment, allPayments = [payment], contracts = []) {
+  if (!payment) {
+    return { history: [], agreedAmount: null, totalPaid: 0, remainingBalance: null };
+  }
+
+  const party = normalizedPaymentParty(payment.paymentTo || payment.person);
+
+  const accountPayments = payment.contractId
+    ? allPayments.filter(row => row && row.contractId === payment.contractId)
+    : party
+      ? allPayments.filter(row =>
+          normalizedPaymentParty(row.paymentTo || row.person) === party
+        )
+      : [payment];
+
+  const unique = new Map();
+
+  accountPayments.forEach(row => {
+    if (!row) return;
+    const key = String(row.id || row.paymentId || `${row.date || ''}-${row.amount || ''}`);
+    if (!unique.has(key)) unique.set(key, row);
+  });
+
+  const history = [...unique.values()].sort((a, b) =>
+    String(a.date || '').localeCompare(String(b.date || '')) ||
+    String(a.id || a.paymentId || '').localeCompare(String(b.id || b.paymentId || ''))
+  );
+
+  const contract = payment.contractId
+    ? contracts.find(row => row.id === payment.contractId)
+    : contracts.find(row => {
+        const name = normalizedPaymentParty(
+          row.person || row.paymentTo || row.vendor || row.contractor || row.name
+        );
+        return party && name === party;
+      });
+
+  const agreedAmount = contract ? Number(contract.agreedAmount) || 0 : null;
+  const totalPaid = history.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+
+  return {
+    history,
+    agreedAmount,
+    totalPaid,
+    remainingBalance: agreedAmount === null ? null : agreedAmount - totalPaid
+  };
+}
+module.exports = { paymentIdForDocument, isDuplicatePaymentRetry, validatePaymentRecord, summarizePaymentRecords, paymentStatementLedger };
