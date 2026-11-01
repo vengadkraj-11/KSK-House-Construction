@@ -162,7 +162,7 @@ service cloud.firestore {
         && request.resource.data.history[request.resource.data.history.size() - 1].status == request.resource.data.status
         && request.resource.data.history[request.resource.data.history.size() - 1].note == request.resource.data.decisionNote
         && request.resource.data.history[request.resource.data.history.size() - 1].decidedAt is timestamp;
-      allow delete: if false;
+      allow delete: if isOwner(projectId);
     }
     match /projects/{projectId}/reminders/{recordId} {
       allow read: if isOwner(projectId);
@@ -185,7 +185,7 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
           'actorUid', 'actorName', 'changeType', 'createdAt',
           'sheetId', 'sheetName', 'title', 'body',
-          'itemName', 'details'
+          'itemName', 'details', 'recordId'
         ])
         && request.resource.data.actorUid == request.auth.uid
         && request.resource.data.changeType == 'edited'

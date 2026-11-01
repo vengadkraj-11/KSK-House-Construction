@@ -269,7 +269,7 @@ export async function addProjectRecord(type: ProjectRecordType, values: Record<s
     const {createdAt, createdBy, ...changes} = payload;
     batch.update(recordRef, {...changes, updatedBy:uid});
   } else batch.set(recordRef, payload);
-  batch.set(activityRef, {title: `${existingId?'Updated':'Added'} ${label} record`, body: `${label} record ${existingId?'updated':'added'} in Project Records`, actorUid: uid, actorName: 'Project owner', sheetId: `module_${type}`, sheetName: label, changeType: 'edited', itemName: clean.paymentId || label, details: `${label} record ${existingId?'updated':'created'}`, createdAt: serverTimestamp()});
+  batch.set(activityRef, {title: `${existingId?'Updated':'Added'} ${label} record`, body: `${label} record ${existingId?'updated':'added'} in Project Records`, actorUid: uid, actorName: 'Project owner', sheetId: `module_${type}`, sheetName: label, changeType: 'edited', itemName: clean.paymentId || label, recordId: recordRef.id, details: `${label} record ${existingId?'updated':'created'}`, createdAt: serverTimestamp()});
   try { await batch.commit(); }
   catch (error: any) { throw new Error(describeFirestoreError(error, 'write', type)); }
   return recordRef.id;
@@ -300,6 +300,34 @@ export async function deletePaymentRecord(payment: ProjectRecord, uid: string): 
   relatedActivity.forEach(item => batch.delete(item.ref));
   receiptSnapshot.docs.forEach(item => batch.delete(item.ref));
   await batch.commit();
+}
+
+/** Delete one owner-managed record by its canonical collection and document ID. */
+export async function deleteProjectRecord(record: ProjectRecord, uid: string): Promise<void> {
+  if (!db || !uid || !auth?.currentUser) throw new Error('Sign in as the project owner to delete records.');
+  if (auth.currentUser.uid !== uid) throw new Error('Authentication changed. Sign in again and retry.');
+  if (firebaseConfig.projectId !== 'ksk-house-construction' || db.app.options.projectId !== firebaseConfig.projectId) throw new Error('Wrong Firebase project. Record deletion was stopped.');
+  if (!record?.id || !['contracts','stock','progress','diary','approvals','reminders'].includes(record.type)) throw new Error('This record is invalid or no longer available.');
+  const ref = doc(db, 'projects', PROJECT_ID, record.type, record.id);
+  if (record.type === 'contracts') {
+    const linked = await getDocs(query(collection(db, 'projects', PROJECT_ID, 'payments'), where('contractId', '==', record.id), limit(1)));
+    if (!linked.empty) throw new Error('This agreement still has linked payments. Edit or delete those payments before deleting the agreement.');
+  }
+  const current = await getDoc(ref);
+  if (!current.exists()) throw new Error('This record was already deleted or no longer exists.');
+  const activities = await getDocs(query(collection(db, 'projects', PROJECT_ID, 'activity'), where('sheetId', '==', `module_${record.type}`)));
+  const relatedActivities = activities.docs.filter(item => item.data().recordId === record.id || item.data().itemName === record.id);
+  const relatedPhotos: any[] = [];
+  if (record.type === 'diary') {
+    const photos = await getDocs(collection(db, 'projects', PROJECT_ID, 'attachments', record.id, 'images'));
+    relatedPhotos.push(...photos.docs);
+  }
+  const deletes = [ref, ...relatedActivities.map(item => item.ref), ...relatedPhotos.map(item => item.ref)];
+  for (let offset = 0; offset < deletes.length; offset += 500) {
+    const batch = writeBatch(db);
+    deletes.slice(offset, offset + 500).forEach(item => batch.delete(item));
+    await batch.commit();
+  }
 }
 
 export async function decideApproval(id: string, status: 'approved' | 'rejected', note: string, uid: string) {

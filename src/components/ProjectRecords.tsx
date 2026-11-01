@@ -4,7 +4,7 @@ import {Picker} from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import {addProjectRecord, cancelReminderRecord, dateLabel, decideApproval, deletePaymentRecord, newProjectRecordId, ProjectRecord, ProjectRecordType, setReminderDate, subscribeProjectRecords} from '../services/projectRecords';
+import {addProjectRecord, cancelReminderRecord, dateLabel, decideApproval, deletePaymentRecord, deleteProjectRecord, newProjectRecordId, ProjectRecord, ProjectRecordType, setReminderDate, subscribeProjectRecords} from '../services/projectRecords';
 import BillAttachments from './BillAttachments';
 import {cancelLocalReminder, reconcileLocalReminders, scheduleLocalReminder} from '../services/notifications';
 import {exportProjectBackup, importProjectBackup} from '../services/projectBackup';
@@ -64,7 +64,9 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
   const [saving, setSaving] = useState(false);
   const savingRef=useRef(false);
   const deletingPaymentRef=useRef<string|null>(null);
+  const deletingRecordRef=useRef<string|null>(null);
   const [deletingPaymentId,setDeletingPaymentId]=useState<string|null>(null);
+  const [deletingRecordId,setDeletingRecordId]=useState<string|null>(null);
   const [values, setValues] = useState<Record<string,string>>({});
   const [editingId, setEditingId] = useState<string | undefined>();
   const [pendingCreateId, setPendingCreateId] = useState<string | undefined>();
@@ -130,7 +132,7 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
     try {
       const clean: Record<string,any> = {};
       current.fields.forEach(field => { const value=(values[field.key]||'').trim(); if(value&&field.key!=='voucherNumber') clean[field.key]=field.numeric?Number(value):value; });
-      if(current.type==='payments'){delete clean.allowPartial; if(values.voucherNumber)clean.voucherNumber=values.voucherNumber;if(values.sourceExpenseId)clean.sourceExpenseId=values.sourceExpenseId;if(clean.paymentTo&&!clean.person)clean.person=clean.paymentTo;clean.currency=clean.currency||'₹';clean.status=clean.status||'paid';clean.enteredBy=clean.enteredBy||uid;clean.createdBy=uid;}
+      if(current.type==='payments'){delete clean.allowPartial;clean.contractId=String(values.contractId||'');if(values.voucherNumber)clean.voucherNumber=values.voucherNumber;if(values.sourceExpenseId)clean.sourceExpenseId=values.sourceExpenseId;if(clean.paymentTo&&!clean.person)clean.person=clean.paymentTo;clean.currency=clean.currency||'₹';clean.status=clean.status||'paid';clean.enteredBy=clean.enteredBy||uid;clean.createdBy=uid;}
       if(current.type==='payments')validatePaymentRecord(clean);
       const createId=editingId?undefined:(pendingCreateId||newProjectRecordId(current.type));
       if(createId&&!pendingCreateId)setPendingCreateId(createId);
@@ -183,6 +185,30 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
     ]);
   };
 
+  const confirmDeleteRecord = (record:ProjectRecord) => {
+    if(!owner||deletingRecordRef.current)return;
+    const label=record.title||record.person||record.material||record.stage||record.expenseRef||record.payee||record.id;
+    const details=[record.date||record.dueDate,record.category,record.status,record.direction&&`${record.direction} · ${record.quantity||''} ${record.unit||''}`,record.amount!==undefined&&money(Number(record.amount)||0),record.agreedAmount!==undefined&&`Agreed ${money(Number(record.agreedAmount)||0)}`,record.description||record.requestNote||record.issues,record.notes].filter(Boolean).join(' · ');
+    Alert.alert('Delete record permanently?',`“${label}”${details?`\n\n${details}`:''}\n\nDelete from ${current.title}? This cannot be undone.`,[
+      {text:'Cancel',style:'cancel'},
+      {text:'Delete',style:'destructive',onPress:async()=>{
+        if(deletingRecordRef.current)return;
+        deletingRecordRef.current=record.id;
+        setDeletingRecordId(record.id);
+        try{
+          await deleteProjectRecord(record,uid);
+          setRecords(old=>({...old,[record.type]:(old[record.type]||[]).filter(item=>item.id!==record.id)}));
+          if(record.type==='reminders'){
+            try{await cancelLocalReminder(`reminder:${uid}:${record.id}`);}
+            catch(error:any){console.warn('Reminder deleted, but its local notification could not be cancelled',error);}
+          }
+          Alert.alert('Record deleted',`${label} was deleted.`);
+        }catch(error:any){Alert.alert('Could not delete record',error?.message||'Check your connection and try again.');}
+        finally{deletingRecordRef.current=null;setDeletingRecordId(null);}
+      }}
+    ]);
+  };
+
   const backup = async () => {
     setToolBusy(true);
     try { await exportProjectBackup(); Alert.alert('Backup exported','Sheets, structured records and attachments were included. Store this file securely.'); }
@@ -225,6 +251,10 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
     const payments=records.payments||[];const summary=summarizePaymentRecords(payments,contracts);const receipts=payments.filter(p=>p.receiptReference||p.receiptAttached===true||p.hasReceipt).length;
     return {...summary,payments:summary.paid,agreements:summary.contractValue,receipts,without:payments.length-receipts};
   },[records.payments,contracts]);
+  const exportPdf=async(task:Promise<void>)=>{
+    try{await task;}
+    catch(error:any){Alert.alert('Could not export PDF',error?.message||'Check the agreement reference and try again.');}
+  };
 
   return <View style={{flex:1,backgroundColor:'#F5F8F5'}}>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{maxHeight:58,backgroundColor:white,borderBottomWidth:1,borderColor:line}} contentContainerStyle={{paddingHorizontal:10,alignItems:'center',gap:7}}>
@@ -250,18 +280,19 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
         <View style={{flexDirection:'row',gap:8,marginVertical:8}}><Picker style={{flex:1,backgroundColor:white}} selectedValue={paymentCategory} onValueChange={setPaymentCategory}><Picker.Item label="All categories" value=""/>{[...new Set((records.payments||[]).map(p=>String(p.category||'')).filter(Boolean))].map(v=><Picker.Item key={v} label={v} value={v}/>)}</Picker><Picker style={{flex:1,backgroundColor:white}} selectedValue={paymentMode} onValueChange={setPaymentMode}><Picker.Item label="All modes" value=""/>{[...new Set((records.payments||[]).map(p=>String(p.method||'')).filter(Boolean))].map(v=><Picker.Item key={v} label={v} value={v}/>)}</Picker></View>
         <Picker selectedValue={paymentContract} onValueChange={setPaymentContract}><Picker.Item label="All agreements" value=""/>{contracts.map(c=><Picker.Item key={c.id} label={c.person||c.id} value={c.id}/>)}</Picker>
         <Picker selectedValue={paymentSort} onValueChange={setPaymentSort}><Picker.Item label="Newest first" value="newest"/><Picker.Item label="Oldest first" value="oldest"/></Picker>
-        <View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginBottom:10}}><TouchableOpacity disabled={toolBusy} onPress={()=>void exportPaymentStatementPdf(filteredPayments,contracts,sheets,false,records.payments||[])} style={{padding:10,backgroundColor:'#EAF0F7',borderRadius:8}}><Text style={{color:'#365775',fontWeight:'800'}}>Export statement PDF</Text></TouchableOpacity><TouchableOpacity disabled={toolBusy} onPress={()=>void exportPaymentStatementPdf(filteredPayments,contracts,sheets,true,records.payments||[])} style={{padding:10,backgroundColor:'#EAF0F7',borderRadius:8}}><Text style={{color:'#365775',fontWeight:'800'}}>Statement with receipt images</Text></TouchableOpacity><Text style={{alignSelf:'center',fontSize:12,color:muted}}>{filteredPayments.length} payments</Text></View>
+        <View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginBottom:10}}><TouchableOpacity disabled={toolBusy} onPress={()=>void exportPdf(exportPaymentStatementPdf(filteredPayments,contracts,sheets,false,records.payments||[]))} style={{padding:10,backgroundColor:'#EAF0F7',borderRadius:8}}><Text style={{color:'#365775',fontWeight:'800'}}>Export statement PDF</Text></TouchableOpacity><TouchableOpacity disabled={toolBusy} onPress={()=>void exportPdf(exportPaymentStatementPdf(filteredPayments,contracts,sheets,true,records.payments||[]))} style={{padding:10,backgroundColor:'#EAF0F7',borderRadius:8}}><Text style={{color:'#365775',fontWeight:'800'}}>Statement with receipt images</Text></TouchableOpacity><Text style={{alignSelf:'center',fontSize:12,color:muted}}>{filteredPayments.length} payments</Text></View>
       </>:null}
       {current.type==='payments'&&contractLedger.length>0?<View style={{backgroundColor:white,borderWidth:1,borderColor:line,borderRadius:10,padding:12,marginBottom:12}}><Text style={{fontWeight:'900',color:ink}}>Agreement reconciliation</Text>{contractLedger.map(({contract,advances,paid,balance,overpaid})=><Text key={contract.id} style={{fontSize:12,color:muted,marginTop:6}}>{contract.person||'Agreement'} · Agreed {money(advances+paid+balance-overpaid)} · Advances {money(advances)} · Other payments {money(paid)} · Outstanding {money(balance)}{overpaid?` · Overpaid ${money(overpaid)}`:''}</Text>)}</View>:null}
 
-      {current.type==='payments'&&filteredPayments.slice(0,visibleCount).map(payment=><View key={payment.id} style={{backgroundColor:white,borderRadius:12,padding:13,marginBottom:9,borderWidth:1,borderColor:line}}><Text style={{fontWeight:'800',color:ink}}>{payment.paymentId||payment.id} · {payment.paymentTo||payment.person||'Not provided'} · {money(Number(payment.amount)||0)}</Text><Text style={{fontSize:11,color:muted,marginTop:4}}>{payment.date||dateLabel(payment.createdAt)} · {payment.voucherNumber||'No voucher'} · {payment.category||'Uncategorized'} · {payment.method||'Mode not provided'} · {payment.status||'Legacy'}</Text>{payment.description?<Text style={{fontSize:12,color:muted,marginTop:4}}>{payment.description}</Text>:null}<View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginTop:8}}>{owner?<><TouchableOpacity onPress={()=>{setEditingId(payment.id);setValues(Object.fromEntries(modules.find(m=>m.type==='payments')!.fields.map(f=>[f.key,String(payment[f.key]??'')])));setValues(old=>({...old,sourceExpenseId:payment.sourceExpenseId||''}));setModal(true);}} style={{padding:8,backgroundColor:'#E6F1EC',borderRadius:8}}><Text style={{color:green,fontWeight:'800'}}>Edit</Text></TouchableOpacity><TouchableOpacity disabled={!!deletingPaymentId} onPress={()=>confirmDeletePayment(payment)} style={{padding:8,backgroundColor:'#F9E8E6',borderRadius:8,opacity:deletingPaymentId===payment.id?0.55:1}}><Text style={{color:'#B64D43',fontWeight:'800'}}>{deletingPaymentId===payment.id?'◌ Deleting…':'🗑 Delete'}</Text></TouchableOpacity></>:null}<TouchableOpacity disabled={toolBusy} onPress={()=>void exportPaymentReceiptPdf(payment,sheets)} style={{padding:8,backgroundColor:'#EAF0F7',borderRadius:8}}><Text style={{color:'#365775',fontWeight:'800'}}>Open / Share PDF</Text></TouchableOpacity></View><BillAttachments recordId={payment.id} canEdit={owner} language="en"/>{payment.sourceExpenseId?<><Text style={{fontSize:12,color:ink,fontWeight:'800',marginTop:8}}>Original Daily Expenses receipt · {payment.voucherNumber||''}</Text><BillAttachments recordId={payment.sourceExpenseId} canEdit={false} language="en"/></>:null}</View>)}
+      {current.type==='payments'&&filteredPayments.slice(0,visibleCount).map(payment=><View key={payment.id} style={{backgroundColor:white,borderRadius:12,padding:13,marginBottom:9,borderWidth:1,borderColor:line}}><Text style={{fontWeight:'800',color:ink}}>{payment.paymentId||payment.id} · {payment.paymentTo||payment.person||'Not provided'} · {money(Number(payment.amount)||0)}</Text><Text style={{fontSize:11,color:muted,marginTop:4}}>{payment.date||dateLabel(payment.createdAt)} · {payment.voucherNumber||'No voucher'} · {payment.category||'Uncategorized'} · {payment.method||'Mode not provided'} · {payment.status||'Legacy'}</Text>{payment.description?<Text style={{fontSize:12,color:muted,marginTop:4}}>{payment.description}</Text>:null}<View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginTop:8}}>{owner?<><TouchableOpacity onPress={()=>{setEditingId(payment.id);setValues(Object.fromEntries(modules.find(m=>m.type==='payments')!.fields.map(f=>[f.key,String(payment[f.key]??'')])));setValues(old=>({...old,sourceExpenseId:payment.sourceExpenseId||''}));setModal(true);}} style={{padding:8,backgroundColor:'#E6F1EC',borderRadius:8}}><Text style={{color:green,fontWeight:'800'}}>Edit</Text></TouchableOpacity><TouchableOpacity disabled={!!deletingPaymentId} onPress={()=>confirmDeletePayment(payment)} style={{padding:8,backgroundColor:'#F9E8E6',borderRadius:8,opacity:deletingPaymentId===payment.id?0.55:1}}><Text style={{color:'#B64D43',fontWeight:'800'}}>{deletingPaymentId===payment.id?'◌ Deleting…':'🗑 Delete'}</Text></TouchableOpacity></>:null}<TouchableOpacity disabled={toolBusy} onPress={()=>void exportPdf(exportPaymentReceiptPdf(payment,sheets,records.payments||[],contracts))} style={{padding:8,backgroundColor:'#EAF0F7',borderRadius:8}}><Text style={{color:'#365775',fontWeight:'800'}}>Open / Share PDF</Text></TouchableOpacity></View><BillAttachments recordId={payment.id} canEdit={owner} language="en"/>{payment.sourceExpenseId?<><Text style={{fontSize:12,color:ink,fontWeight:'800',marginTop:8}}>Original Daily Expenses receipt · {payment.voucherNumber||''}</Text><BillAttachments recordId={payment.sourceExpenseId} canEdit={false} language="en"/></>:null}</View>)}
 
       {current.type==='stock'&&inventory.slice(0,visibleCount).map(item=><View key={`${item.material}-${item.unit}`} style={{backgroundColor:white,borderRadius:12,padding:13,marginBottom:9,borderWidth:1,borderColor:line}}><Text style={{fontWeight:'900',color:item.lowStock?'#B64D43':ink}}>{item.material} · {item.available} {item.unit}{item.lowStock?' · LOW STOCK':''}</Text><Text style={{fontSize:12,color:muted,marginTop:5}}>Ordered {item.purchased} · Received {item.received} · Returns in {item.returnedToStock} · Supplier returns {item.returnedToSupplier} · Used {item.used} · Wastage {item.wastage}{item.lowStockLevel?` · Alert below ${item.lowStockLevel}`:''}{item.rate?` · Rate ${money(item.rate)}`:''}{item.supplier?` · ${item.supplier}`:''}</Text></View>)}
 
       {items.slice(0,visibleCount).map(item=><View key={item.id} style={{backgroundColor:white,borderRadius:13,padding:14,marginBottom:10,borderWidth:1,borderColor:line}}>
         <Text style={{fontSize:15,fontWeight:'900',color:ink}}>{item.person||item.material||item.stage||item.title||item.payee||item.expenseRef||'Record'}</Text>
         {current.type==='diary'?<BillAttachments recordId={item.id} collectionName="attachments" canEdit={owner} language="en"/>:null}
-        {owner&&['contracts','stock','progress','diary'].includes(current.type)?<TouchableOpacity onPress={()=>{setEditingId(item.id);setValues(Object.fromEntries(current.fields.map(field=>[field.key,String(item[field.key]??'')])));setModal(true);}} style={{alignSelf:'flex-start',marginTop:8,padding:8,backgroundColor:'#E6F1EC',borderRadius:8}}><Text style={{color:green,fontWeight:'800'}}>Edit record</Text></TouchableOpacity>:null}
+        <View style={{flexDirection:'row',gap:8,marginTop:8}}>{owner&&['contracts','stock','progress','diary'].includes(current.type)?<TouchableOpacity onPress={()=>{setEditingId(item.id);setValues(Object.fromEntries(current.fields.map(field=>[field.key,String(item[field.key]??'')])));setModal(true);}} style={{padding:8,backgroundColor:'#E6F1EC',borderRadius:8}}><Text style={{color:green,fontWeight:'800'}}>Edit record</Text></TouchableOpacity>:null}
+        {owner&&<TouchableOpacity disabled={!!deletingRecordId} onPress={()=>confirmDeleteRecord(item)} style={{padding:8,backgroundColor:'#F9E8E6',borderRadius:8,opacity:deletingRecordId===item.id?0.55:1}}><Text style={{color:'#B64D43',fontWeight:'800'}}>{deletingRecordId===item.id?'Deleting…':'🗑 Delete'}</Text></TouchableOpacity>}</View>
         {current.fields.filter(field=>!['person','material','stage','title','contractId'].includes(field.key)).map(field=>item[field.key]!==undefined&&item[field.key]!==''?<Text key={field.key} style={{fontSize:12,color:muted,marginTop:5}}>{field.label}: {field.numeric?money(Number(item[field.key])||0):String(item[field.key])}</Text>:null)}
         {current.type==='progress'&&item.plannedDate&&!item.actualDate&&Number(item.percent)<100&&item.plannedDate<new Date().toISOString().slice(0,10)?<Text style={{color:'#B64D43',fontWeight:'800',marginTop:7}}>Delayed · planned {item.plannedDate}</Text>:null}
         {current.type==='approvals'?<><Text style={{fontWeight:'800',color:String(item.status||'pending').toLowerCase()==='pending'?'#A06C13':green,marginTop:6}}>{String(item.status||'pending').toUpperCase()}</Text>{item.requestNote?<Text style={{fontSize:12,color:muted,marginTop:4}}>Request: {item.requestNote}</Text>:null}{item.decidedBy?<Text style={{fontSize:11,color:muted,marginTop:4}}>Decision by {item.decidedBy} · {dateLabel(item.decidedAt)} · {item.decisionNote}</Text>:null}{owner&&String(item.status||'pending').trim().toLowerCase()==='pending'?<><TextInput value={decisionNotes[item.id]||''} onChangeText={text=>setDecisionNotes(old=>({...old,[item.id]:text}))} placeholder="Decision note (optional)" style={{borderWidth:1,borderColor:line,padding:9,borderRadius:8,marginTop:8}}/><View style={{flexDirection:'row',gap:8,marginTop:8}}>{(['approved','rejected'] as const).map(status=><TouchableOpacity disabled={!!deciding} key={status} onPress={()=>void decide(item,status)} style={{backgroundColor:status==='approved'?green:'#B64D43',padding:9,borderRadius:8}}><Text style={{color:white,fontWeight:'800'}}>{deciding===item.id?'Saving…':status==='approved'?'Approve':'Reject'}</Text></TouchableOpacity>)}</View></>:null}{Array.isArray(item.history)?item.history.map((entry:any,index:number)=><Text key={`${item.id}-${index}`} style={{fontSize:11,color:muted,marginTop:5}}>{String(entry.status).toUpperCase()} by {entry.actorUid} · {dateLabel(entry.decidedAt)}{entry.note?` · ${entry.note}`:''}</Text>):null}</>:null}

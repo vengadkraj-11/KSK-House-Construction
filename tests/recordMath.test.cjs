@@ -4,7 +4,7 @@ const {summarizeContracts, summarizeInventory} = require('../src/services/record
 const {getMaterialOptions} = require('../src/services/materialOptions.js');
 const {getDailyExpenseVoucherRows,canCreateVoucherPayment,voucherRemainingAmount,validateAgreementLink} = require('../src/services/projectRecordLinks.js');
 const {renderReceiptSection} = require('../src/services/reportReceipts.js');
-const {paymentIdForDocument,isDuplicatePaymentRetry,validatePaymentRecord,summarizePaymentRecords} = require('../src/services/paymentMath.js');
+const {paymentIdForDocument,isDuplicatePaymentRetry,validatePaymentRecord,summarizePaymentRecords,paymentStatementLedger,paymentStatementAgreements} = require('../src/services/paymentMath.js');
 
 test('material dropdown catalogue includes distinct values from all three material sheets',()=>{
   const options=getMaterialOptions({materials_ground:{values:[['Material / Item'],['Cement'],['Steel']]},materials_first:{values:[['Item'],['Steel'],['Blocks']]},materials_boq:{values:[['Description'],['Sand'],['Tiles']]}});
@@ -117,4 +117,61 @@ test('payment retry for an existing stable document ID is treated as already com
 
 test('payment reconciliation counts payment records once and separates advances',()=>{
   assert.deepEqual(summarizePaymentRecords([{amount:200,paymentKind:'advance',sourceExpenseId:'e1',contractId:'c'},{amount:300,sourceExpenseId:'e1',contractId:'c'},{amount:25}], [{id:'c',agreedAmount:600}]), {paid:525,advances:200,contractValue:600,remaining:100,overpaid:0,count:3});
+});
+
+test('payment statement includes unique agreement transactions in date order and recalculates paid and balance totals',()=>{
+  const payment={id:'p3',contractId:'c1',date:'2026-03-01',description:'Final work',amount:250};
+  const rows=[
+    {id:'p2',contractId:'c1',date:'2026-02-01',description:'Materials',amount:250},
+    {id:'other',contractId:'c2',date:'2026-01-01',description:'Other agreement',amount:900},
+    {id:'p1',contractId:'c1',date:'2026-01-01',description:'Advance',amount:500},
+    {id:'p2',contractId:'c1',date:'2026-02-01',description:'Duplicate snapshot',amount:250},
+    payment
+  ];
+  const contracts=[{id:'c1',agreedAmount:1000},{id:'c2',agreedAmount:500}];
+  const statement=paymentStatementLedger(payment,rows,contracts);
+  assert.deepEqual(statement.history.map(row=>row.id),['p1','p2','p3']);
+  assert.deepEqual(statement.history.map(row=>row.description),['Advance','Materials','Final work']);
+  assert.equal(statement.agreedAmount,1000);
+  assert.equal(statement.totalPaid,1000);
+  assert.equal(statement.remainingBalance,0);
+  const withNewPayment=paymentStatementLedger({...payment,id:'p4',date:'2026-04-01',amount:100},[...rows,{...payment,id:'p4',date:'2026-04-01',amount:100}],contracts);
+  assert.equal(withNewPayment.history.length,4);
+  assert.equal(withNewPayment.totalPaid,1100);
+  assert.equal(withNewPayment.remainingBalance,-100);
+});
+
+test('payment statement does not infer agreed amount for a payment without an agreement',()=>{
+  const statement=paymentStatementLedger({id:'standalone',amount:75,date:'2026-01-01'},[],[]);
+  assert.deepEqual(statement,{history:[{id:'standalone',amount:75,date:'2026-01-01'}],agreedAmount:null,totalPaid:75,remainingBalance:null});
+});
+
+test('payment statement uses exact agreement IDs when names match and sums only that agreement',()=>{
+  const agreements=[{id:'agreement-a',person:'Same Vendor',agreedAmount:1000},{id:'agreement-b',person:'Same Vendor',agreedAmount:400}];
+  const p={id:'p1',contractId:'agreement-a',person:'Same Vendor',amount:100};
+  const statement=paymentStatementLedger(p,[p,{id:'p2',contractId:'agreement-a',person:'Same Vendor',amount:50},{id:'p3',contractId:'agreement-b',person:'Same Vendor',amount:200}],agreements);
+  assert.equal(statement.agreedAmount,1000);
+  assert.equal(statement.totalPaid,150);
+  assert.equal(statement.remainingBalance,850);
+  assert.throws(()=>paymentStatementLedger({...p,contractId:'missing'},[p],agreements),/could not be found/);
+});
+
+test('legacy payments use a normalized payee only when it identifies one agreement',()=>{
+  const agreements=[{id:'a',person:'Vendor One',agreedAmount:500},{id:'b',person:'Vendor Two',agreedAmount:200}];
+  const p={id:'legacy1',person:'  VENDOR   ONE ',amount:80};
+  const statement=paymentStatementLedger(p,[p,{id:'legacy2',paymentTo:'Vendor One',amount:20}],agreements);
+  assert.equal(statement.agreedAmount,500);
+  assert.equal(statement.totalPaid,100);
+  assert.equal(statement.remainingBalance,400);
+  const exactLinked=paymentStatementLedger({id:'linked',contractId:'a',person:'Vendor One',amount:10},[{id:'linked',contractId:'a',person:'Vendor One',amount:10},{id:'old',person:'vendor one',amount:30},{id:'other',contractId:'b',person:'Vendor Two',amount:900}],agreements);
+  assert.equal(exactLinked.totalPaid,40);
+  assert.deepEqual(exactLinked.history.map(row=>row.id),['linked','old']);
+  assert.equal(paymentStatementLedger({id:'ambiguous',person:'Same',amount:1},[],[{id:'a',person:'Same',agreedAmount:5},{id:'b',person:'Same',agreedAmount:8}]).agreedAmount,null);
+});
+
+test('filtered statement balances use the complete unique payment history per agreement',()=>{
+  const agreements=[{id:'a',person:'Same Vendor',agreedAmount:1000},{id:'b',person:'Same Vendor',agreedAmount:500}];
+  const all=[{id:'p1',contractId:'a',amount:100},{id:'p2',contractId:'a',amount:200},{id:'p2',contractId:'a',amount:200},{id:'p3',contractId:'b',amount:150}];
+  const totals=paymentStatementAgreements([all[0],all[3]],all,agreements);
+  assert.deepEqual(totals.map(row=>[row.agreement.id,row.agreedAmount,row.totalPaid,row.remainingBalance]),[['a',1000,300,700],['b',500,150,350]]);
 });

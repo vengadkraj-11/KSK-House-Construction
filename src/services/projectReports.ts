@@ -8,7 +8,7 @@ import {db} from '../firebase';
 import {renderReceiptSection} from './reportReceipts';
 import {ProjectRecord} from './projectRecords';
 import {summarizeContracts, summarizeInventory} from './recordMath';
-import {paymentStatementLedger, summarizePaymentRecords} from './paymentMath';
+import {paymentStatementAgreements, paymentStatementLedger, summarizePaymentRecords} from './paymentMath';
 
 type Records=Record<string,ProjectRecord[]>;
 const amount=(row:ProjectRecord)=>Number(row.amount)||0;
@@ -243,8 +243,6 @@ export async function exportPaymentStatementPdf(
   includeImages=false,
   allPayments:ProjectRecord[]=payments
 ):Promise<void>{
-  void allPayments;
-
   const setup=sheets?.project_setup?.values||[];
 
   const setting=(pattern:RegExp)=>
@@ -253,45 +251,22 @@ export async function exportPaymentStatementPdf(
   const projectName='KSK CONSTRUCTION';
   const location=setting(/location|site address/i);
 
-  const ordered=[...payments].sort((a,b)=>
+  const uniquePaymentRows=new Map<string,ProjectRecord>();
+  payments.forEach(row=>{const key=String(row.id||row.paymentId||`${row.date||''}-${row.amount||''}`);if(!uniquePaymentRows.has(key))uniquePaymentRows.set(key,row);});
+  const ordered=[...uniquePaymentRows.values()].sort((a,b)=>
     String(a.date||'').localeCompare(String(b.date||''))
   );
-
-  const totalPaid=ordered.reduce(
-    (sum,row)=>sum+(Number(row.amount)||0),0
-  );
-
-  const normalize=(value:any)=>
-    String(value||'').trim().replace(/\s+/g,' ').toLowerCase();
 
   const recipients=[...new Set(
     ordered.map(row=>String(row.paymentTo||row.person||'').trim()).filter(Boolean)
   )];
 
-  const contractIds=new Set(
-    ordered.map(row=>String(row.contractId||'')).filter(Boolean)
-  );
-
-  const recipientKeys=new Set(recipients.map(normalize));
-
-  const relevantContracts=contracts.filter(contract=>{
-    if(contractIds.has(String(contract.id||''))) return true;
-
-    const name=normalize(
-      contract.person||contract.paymentTo||contract.vendor||
-      contract.contractor||contract.name
-    );
-
-    return !contractIds.size && name && recipientKeys.has(name);
-  });
-
-  const agreedAmount=relevantContracts.length
-    ? relevantContracts.reduce(
-        (sum,row)=>sum+(Number(row.agreedAmount)||0),0
-      )
-    : null;
-
-  const remaining=agreedAmount===null?null:agreedAmount-totalPaid;
+  const accountBalances=paymentStatementAgreements(ordered,allPayments,contracts);
+  const hasCompleteAgreementAmounts=accountBalances.length>0&&accountBalances.every(row=>row.agreedAmount!==null&&row.remainingBalance!==null);
+  const agreedAmount=hasCompleteAgreementAmounts?accountBalances.reduce((sum,row)=>sum+(row.agreedAmount||0),0):null;
+  const remaining=hasCompleteAgreementAmounts?accountBalances.reduce((sum,row)=>sum+(row.remainingBalance||0),0):null;
+  const totalPaid=accountBalances.length?accountBalances.reduce((sum,row)=>sum+row.totalPaid,0):ordered.reduce((sum,row)=>sum+(Number(row.amount)||0),0);
+  const balanceRows=accountBalances.map(({agreement,agreedAmount:agreed,totalPaid:paid,remainingBalance:balance})=>`<tr><td>${htmlEscape(blank(agreement.person||agreement.name||agreement.id))}</td><td class="money">${agreed===null?'Not provided':paymentMoney(agreed,String(ordered[0]?.currency||'₹'))}</td><td class="money">${paymentMoney(paid,String(ordered[0]?.currency||'₹'))}</td><td class="money">${balance===null?'Not provided':paymentMoney(balance,String(ordered[0]?.currency||'₹'))}</td></tr>`).join('');
 
   const uniqueValues=(values:any[])=>
     [...new Set(
@@ -387,6 +362,8 @@ table.history th:last-child,table.history td:last-child{text-align:right}
 <thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
 <tbody>${transactionRows||'<tr><td colspan="3">No payments found.</td></tr>'}</tbody>
 </table>
+
+${accountBalances.length>1?`<div class="section-title">AGREEMENT BALANCES</div><table class="history"><thead><tr><th>Agreement</th><th>Agreed amount</th><th>Total paid</th><th>Remaining</th></tr></thead><tbody>${balanceRows}</tbody></table>`:''}
 
 <div class="amount-box">
 <div class="amount-row">

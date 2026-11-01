@@ -49,6 +49,9 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   for (const path of ['projects/ksk/stock/stock1','projects/ksk/progress/progress1','projects/ksk/diary/diary1']) assert.equal((await request(path,'viewer')).status,200);
   assert.equal((await request('projects/ksk/approvals/approval1','viewer')).status,403);
   assert.equal((await request('projects/ksk/reminders/reminder1','viewer')).status,403);
+  for (const path of ['projects/ksk/contracts/contract1','projects/ksk/stock/stock1','projects/ksk/progress/progress1','projects/ksk/diary/diary1','projects/ksk/reminders/reminder1']) {
+    assert.equal((await request(path,'viewer','DELETE')).status,403,`Viewers must not delete ${path}.`);
+  }
   assert.equal((await request('projects/ksk/sheets/sheet1','unknown')).status,403);
 
   const standalonePaymentPath=`projects/${project}/databases/(default)/documents/projects/ksk/payments/standalone-payment`;
@@ -141,10 +144,14 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal(forgedApproval.status,403,await forgedApproval.text());
   const alteredRequest=await commit('owner',[{update:{name:approvalPath,fields:{expenseRef:stringValue('edited after decision'),status:stringValue('rejected'),decidedBy:stringValue('owner'),decisionNote:stringValue('Changed'),history:{arrayValue:{values:[{mapValue:{fields:{status:stringValue('rejected'),note:stringValue('Changed'),actorUid:stringValue('owner'),decidedAt:{timestampValue:new Date().toISOString()}}}}]}}}},updateMask:{fieldPaths:['expenseRef','status','decidedBy','decisionNote','history']},updateTransforms:[{fieldPath:'decidedAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}]);
   assert.equal(alteredRequest.status,403,await alteredRequest.text());
+  assert.equal((await request('projects/ksk/approvals/approval2','viewer','DELETE')).status,403,'Viewers must not delete approvals.');
   const deletedApproval=await request('projects/ksk/approvals/approval2','owner','DELETE');
-  assert.equal(deletedApproval.status,403);
+  assert.equal(deletedApproval.status,200,'Project owners may delete approvals.');
   await seed('projects/ksk/approvals/approvalLegacy',{status:stringValue('Pending')});
   const legacyPath=`projects/${project}/databases/(default)/documents/projects/ksk/approvals/approvalLegacy`;
   const legacyDecision=await commit('owner',[{update:{name:legacyPath,fields:{status:stringValue('rejected'),decidedBy:stringValue('owner'),decisionNote:stringValue('legacy checked'),history:{arrayValue:{values:[{mapValue:{fields:{status:stringValue('rejected'),note:stringValue('legacy checked'),actorUid:stringValue('owner'),decidedAt:{timestampValue:new Date().toISOString()}}}}]}}}},updateMask:{fieldPaths:['status','decidedBy','decisionNote','history','updatedAt']},updateTransforms:[{fieldPath:'decidedAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}]);
   assert.equal(legacyDecision.status,200,await legacyDecision.text());
+  for (const path of ['projects/ksk/contracts/contract1','projects/ksk/stock/stock1','projects/ksk/progress/progress1','projects/ksk/diary/diary1','projects/ksk/reminders/reminder1']) {
+    assert.equal((await request(path,'owner','DELETE')).status,200,`Project owners may delete ${path}.`);
+  }
 });
