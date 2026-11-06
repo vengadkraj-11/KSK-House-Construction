@@ -74,6 +74,32 @@ export function calculateDashboard(sheets: SheetMap): DashboardNumbers {
   };
 }
 
+export function calculateFloorProgress(sheets: SheetMap) {
+  const sheet=sheets.work_schedule;
+  const headers=(sheet?.values?.[0]||[]).map(value=>String(value||'').trim());
+  const floorIndex=headers.findIndex(value=>/floor\s*\/\s*area/i.test(value));
+  const progressIndex=headers.findIndex(value=>/%\s*complete|completion|progress/i.test(value));
+  const result=['Ground Floor','First Floor'].map(floor=>({floor,progress:null as number|null}));
+  if(floorIndex<0||progressIndex<0)return result;
+  const values=new Map(result.map(item=>[item.floor,{sum:0,count:0}]));
+  for(const row of rows(sheet)){
+    const floor=String(row[floorIndex]||'').trim().toLowerCase();
+    const target=floor.includes('ground')?'Ground Floor':floor.includes('first')?'First Floor':null;
+    if(!target)continue;
+    const raw=String(row[progressIndex]??'').trim().replace(/%$/,'');
+    if(!raw)continue;
+    const progress=Number(raw);
+    if(!Number.isFinite(progress))continue;
+    const total=values.get(target)!;
+    total.sum+=Math.max(0,Math.min(100,progress));
+    total.count++;
+  }
+  return result.map(item=>{
+    const total=values.get(item.floor)!;
+    return {...item,progress:total.count?total.sum/total.count:null};
+  });
+}
+
 export function calculateFloorSummary(sheets: SheetMap) {
   const materialRows = rows(sheets.materials_boq);
   const labourRows = rows(sheets.labour_work);

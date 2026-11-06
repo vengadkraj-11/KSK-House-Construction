@@ -16,21 +16,27 @@ import {collection, doc, getDoc, onSnapshot} from 'firebase/firestore';
 import BillAttachments from './src/components/BillAttachments';
 import {auth, db, isFirebaseConfigured} from './src/firebase';
 import {LOCAL_WORKBOOK, SHEET_ORDER, SHEET_TITLES, ICONS, headersForSheet, meaningfulRows, displayCell, excelSerialToDate, dateToExcelSerial} from './src/data';
-import {calculateDashboard, calculateFloorSummary, countMaterials} from './src/services/calculations';
+import {calculateDashboard, calculateFloorProgress, calculateFloorSummary, countMaterials} from './src/services/calculations';
 import {enableNotifications, showActivityNotification} from './src/services/notifications';
 import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuoteSheet, ensureSheetRecordIds, clearActivityHistory} from './src/services/projectSync';
 import {runProjectPermissionDiagnostics, setProjectMembershipDiagnostic} from './src/services/projectRecords';
 import {ActivityItem, Role, SheetDocument, SheetMap} from './src/types';
 import ProjectRecords from './src/components/ProjectRecords';
-import {createLoginHistorySession, loginHistoryDate, LoginHistoryEntry, subscribeLoginHistory} from './src/services/loginHistory';
+import {ProjectRecord, subscribeProjectRecords} from './src/services/projectRecords';
+import {summarizePaymentRecords} from './src/services/paymentMath';
+import {createLoginHistorySession, clearLoginHistory, loginHistoryDate, LoginHistoryEntry, subscribeLoginHistory} from './src/services/loginHistory';
 import {downloadBase64File, printHtmlInBrowser} from './src/services/webFiles';
 import {Alert} from './src/services/platformAlert';
+import {KSK_DESIGN} from './src/theme/kskDesignSystem';
 
 const C = {
-  ink: '#17302D', muted: '#6F817C', green: '#1C6255', green2: '#E6F1EC',
-  mint: '#D9E9E1', paper: '#F5F7F4', white: '#FFFFFF', line: '#E2E9E5',
-  gold: '#C58D3D', goldBg: '#FAF1E1', red: '#B64D43', redBg: '#F9E8E6',
-  dark: '#112B28', blueBg: '#EAF0F7'
+  ink: KSK_DESIGN.colors.ink, muted: KSK_DESIGN.colors.inkMuted,
+  green: KSK_DESIGN.colors.primary, green2: KSK_DESIGN.colors.primarySoft,
+  mint: '#D9E9E1', paper: KSK_DESIGN.colors.canvas, white: KSK_DESIGN.colors.white,
+  line: KSK_DESIGN.colors.border, gold: KSK_DESIGN.colors.gold,
+  goldBg: KSK_DESIGN.colors.goldSoft, red: KSK_DESIGN.colors.danger,
+  redBg: KSK_DESIGN.colors.dangerSoft, dark: KSK_DESIGN.colors.dark,
+  blueBg: KSK_DESIGN.colors.infoSoft
 };
 
 const money = (value: number) => `₹${Math.round(value || 0).toLocaleString('en-IN')}`;
@@ -77,13 +83,13 @@ function pretty(value: any, header = ''): string {
   return String(value);
 }
 
-function cardStyle(extra: any = {}) { return {backgroundColor: C.white, borderRadius: 22, padding: 18, borderWidth: 1, borderColor: '#E5ECE7', shadowColor: C.dark, shadowOpacity: 0.055, shadowRadius: 12, shadowOffset: {width: 0, height: 5}, elevation: 2, ...extra}; }
+function cardStyle(extra: any = {}) { return {backgroundColor: C.white, borderRadius: KSK_DESIGN.radius.xl, padding: KSK_DESIGN.spacing.lg, borderWidth: 1, borderColor: C.line, ...KSK_DESIGN.elevation.card, ...extra}; }
 function buttonStyle(disabled = false, secondary = false) {
-  return {backgroundColor: disabled ? '#DCE4DF' : secondary ? C.green2 : C.green, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 16, alignItems: 'center' as const, justifyContent: 'center' as const};
+  return {backgroundColor: disabled ? '#DCE4DF' : secondary ? C.green2 : C.green, borderRadius: KSK_DESIGN.radius.md, paddingVertical: KSK_DESIGN.spacing.md, paddingHorizontal: KSK_DESIGN.spacing.lg, minHeight: 48, alignItems: 'center' as const, justifyContent: 'center' as const};
 }
 
 function Pill({children, color = C.green2, textColor = C.green}: any) {
-  return <View style={{backgroundColor: color, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6}}><Text style={{fontSize: 11, fontWeight: '800', color: textColor}}>{children}</Text></View>;
+  return <View style={{backgroundColor: color, borderRadius: KSK_DESIGN.radius.pill, paddingHorizontal: 11, paddingVertical: 6}}><Text style={{fontSize: KSK_DESIGN.typography.label, fontWeight: '800', color: textColor}}>{children}</Text></View>;
 }
 
 function SectionTitle({title, right, onRight}: any) {
@@ -98,15 +104,21 @@ function LoginScreen({onLogin, demo}: {onLogin: (email: string, password: string
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const submit=async()=>{
+    if(loading||!email.trim()||!password)return;
+    setLoading(true);
+    try{await onLogin(email.trim(),password);}
+    finally{setLoading(false);}
+  };
   return <SafeAreaView style={{flex: 1, backgroundColor: C.paper}}>
     <StatusBar barStyle="dark-content" />
     <ScrollView contentContainerStyle={{flexGrow: 1, justifyContent: 'center', padding: 24}}>
       <View style={{alignSelf: 'center', width: 72, height: 72, borderRadius: 22, backgroundColor: C.dark, alignItems: 'center', justifyContent: 'center', marginBottom: 20}}>
         <Text style={{fontSize: 25, color: '#FFFFFF', fontWeight: '900', letterSpacing: 1}}>KSK</Text>
       </View>
-      <Text style={{fontSize: 28, fontWeight: '900', textAlign: 'center', color: C.ink}}>KSK House</Text>
-      <Text style={{fontSize: 14, textAlign: 'center', color: C.muted, marginTop: 7, marginBottom: 28}}>Construction manager · Thuvar</Text>
-      <View style={cardStyle()}>
+      <Text style={{fontSize: KSK_DESIGN.typography.display, fontWeight: '900', textAlign: 'center', color: C.ink}}>KSK House Construction</Text>
+      <Text style={{fontSize: 14, textAlign: 'center', color: C.muted, marginTop: 7, marginBottom: 28}}>Project management · Secure access</Text>
+      <View style={cardStyle({padding: 22})}>
         {!isFirebaseConfigured ? <>
           <Pill color={C.goldBg} textColor={C.gold}>LOCAL PREVIEW</Pill>
           <Text style={{fontSize: 19, fontWeight: '800', color: C.ink, marginTop: 14}}>Cloud connection not set up</Text>
@@ -115,10 +127,13 @@ function LoginScreen({onLogin, demo}: {onLogin: (email: string, password: string
         </> : <>
           <Text style={{fontSize: 18, fontWeight: '800', color: C.ink, marginBottom: 14}}>Sign in to your project</Text>
           <Text style={{fontSize: 12, fontWeight: '700', color: C.muted, marginBottom: 6}}>EMAIL</Text>
-          <TextInput value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="you@example.com" placeholderTextColor="#9AA8A2" style={{backgroundColor: C.paper, borderRadius: 11, borderWidth: 1, borderColor: C.line, padding: 13, color: C.ink, marginBottom: 13}} />
+          <TextInput value={email} onChangeText={setEmail} autoCapitalize="none" autoComplete="email" textContentType="emailAddress" keyboardType="email-address" returnKeyType="next" placeholder="you@example.com" placeholderTextColor="#9AA8A2" style={{backgroundColor: C.paper, borderRadius: KSK_DESIGN.radius.sm, borderWidth: 1, borderColor: C.line, padding: 14, minHeight: 50, color: C.ink, marginBottom: 13}} />
           <Text style={{fontSize: 12, fontWeight: '700', color: C.muted, marginBottom: 6}}>PASSWORD</Text>
-          <TextInput value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Enter password" placeholderTextColor="#9AA8A2" style={{backgroundColor: C.paper, borderRadius: 11, borderWidth: 1, borderColor: C.line, padding: 13, color: C.ink, marginBottom: 15}} />
-          <TouchableOpacity disabled={loading || !email || !password} onPress={async () => {setLoading(true); await onLogin(email.trim(), password); setLoading(false);}} style={buttonStyle(loading || !email || !password)}>
+          <View style={{flexDirection:'row',alignItems:'center',backgroundColor:C.paper,borderRadius:KSK_DESIGN.radius.sm,borderWidth:1,borderColor:C.line,marginBottom:15}}>
+            <TextInput value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoComplete="current-password" textContentType="password" returnKeyType="go" onSubmitEditing={()=>void submit()} placeholder="Enter password" placeholderTextColor="#9AA8A2" style={{flex:1,padding:14,minHeight:50,color:C.ink}} />
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={showPassword?'Hide password':'Show password'} onPress={()=>setShowPassword(value=>!value)} hitSlop={8} style={{padding:12}}><Text style={{fontSize:12,fontWeight:'800',color:C.green}}>{showPassword?'Hide':'Show'}</Text></TouchableOpacity>
+          </View>
+          <TouchableOpacity disabled={loading || !email.trim() || !password} onPress={()=>void submit()} style={buttonStyle(loading || !email.trim() || !password)}>
             {loading ? <ActivityIndicator color="#FFF" /> : <Text style={{color: '#FFF', fontWeight: '800'}}>Sign in securely</Text>}
           </TouchableOpacity>
           <Text style={{fontSize: 11, color: C.muted, textAlign: 'center', marginTop: 13}}>Your role is assigned by the project administrator. Only the owner account can edit construction data.</Text>
@@ -129,24 +144,49 @@ function LoginScreen({onLogin, demo}: {onLogin: (email: string, password: string
 }
 
 function MetricCard({label, value, helper, accent = false}: any) {
-  return <View style={cardStyle({flex: 1, minWidth: 148, padding: 16, borderRadius: 20, backgroundColor: accent ? C.dark : C.white, borderColor: accent ? C.dark : '#E5ECE7'})}>
+  return <View style={cardStyle({flex: 1, minWidth: 148, padding: 16, borderRadius: KSK_DESIGN.radius.lg, backgroundColor: accent ? C.dark : C.white, borderColor: accent ? C.dark : C.line})}>
     <Text style={{fontSize: 10, color: accent ? '#C7DAD2' : C.muted, fontWeight: '800', letterSpacing: 0.65}}>{label.toUpperCase()}</Text>
     <Text style={{fontSize: 21, color: accent ? '#FFFFFF' : C.ink, fontWeight: '900', marginTop: 9, letterSpacing: -0.5}}>{value}</Text>
     {helper ? <Text style={{fontSize: 11, color: accent ? '#C7DAD2' : C.muted, marginTop: 5}}>{helper}</Text> : null}
   </View>;
 }
 
+function ProgressTrack({value}: {value: number}) {
+  const percent=Math.max(0,Math.min(100,value));
+  return <View accessibilityRole="progressbar" accessibilityValue={{min:0,max:100,now:percent}} style={{height:8,backgroundColor:C.green2,borderRadius:KSK_DESIGN.radius.pill,overflow:'hidden'}}>
+    <View style={{height:8,width:`${percent}%`,backgroundColor:C.green,borderRadius:KSK_DESIGN.radius.pill}}/>
+  </View>;
+}
 
-function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, language}: any) {
+function Dashboard({sheets, activities, payments, contracts, paymentsLoading, paymentsError, role, syncLabel, onOpen, onAddExpense, onViewPayments, onViewActivity, language}: any) {
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
 
   const stats = calculateDashboard(sheets);
   const setup = sheets.project_setup?.values || [];
-  const project = setup?.[1]?.[1] || 'KSK';
-  const location = setup?.[2]?.[1] || 'Thuvar';
+  const project = String(setup?.[1]?.[1] || t('KSK House Construction','கேஎஸ்கே வீடு கட்டுமானம்'));
+  const location = String(setup?.[2]?.[1] || t('Location not set','இடம் அமைக்கப்படவில்லை'));
   const builtUp = n(setup?.[4]?.[1]) + n(setup?.[5]?.[1]);
   const materialStats = countMaterials(sheets);
   const pctSpent = stats.totalBudget > 0 ? Math.min(100, stats.totalPaid / stats.totalBudget * 100) : 0;
+  const paymentSummary=summarizePaymentRecords(payments||[],contracts||[]);
+  const recentPayments=[...(payments||[])].sort((a:ProjectRecord,b:ProjectRecord)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,3);
+  const expenseSheet=sheets.daily_expenses||{values:[],formulas:[]};
+  const expenseHeaders=headersForSheet('daily_expenses',expenseSheet);
+  const expenseColumn=(pattern:RegExp)=>expenseHeaders.findIndex((header:string)=>pattern.test(header));
+  const expenseIndexes={date:expenseColumn(/^date$/i),category:expenseColumn(/expense category/i),description:expenseColumn(/item \/ description/i),payee:expenseColumn(/vendor \/ person/i),amount:expenseColumn(/amount paid/i)};
+  const recentExpenses=meaningfulRows(expenseSheet).map(({row,index})=>{
+    const rawDate=expenseIndexes.date>=0?row[expenseIndexes.date]:'';
+    const isoDate=excelSerialToDate(rawDate)||String(rawDate||'');
+    return {
+      id:String(expenseSheet.recordIds?.[index]||`${isoDate}-${index}`),
+      date:isoDate,
+      category:String(expenseIndexes.category>=0?row[expenseIndexes.category]||'':''),
+      description:String(expenseIndexes.description>=0?row[expenseIndexes.description]||'':''),
+      payee:String(expenseIndexes.payee>=0?row[expenseIndexes.payee]||'':''),
+      amount:n(expenseIndexes.amount>=0?row[expenseIndexes.amount]:0)
+    };
+  }).filter((entry:any)=>entry.amount>0).sort((a:any,b:any)=>b.date.localeCompare(a.date)).slice(0,3);
+  const floorProgress=calculateFloorProgress(sheets);
 
   const translatedSync = language === 'ta'
     ? ({
@@ -170,7 +210,7 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, l
             {project} {t('Project', 'திட்டம்')}
           </Text>
           <Text style={{color: '#D0E0D9', fontSize: 13, marginTop: 4}}>
-            {location} · {builtUp.toLocaleString('en-IN')} {t('sq ft', 'சதுர அடி')} · {t('G + 1', 'தரை + முதல் தளம்')}
+                {location}{builtUp>0?` · ${builtUp.toLocaleString('en-IN')} ${t('sq ft', 'சதுர அடி')} · ${t('G + 1', 'தரை + முதல் தளம்')}`:''}
           </Text>
         </View>
         <View style={{width: 52, height: 52, borderRadius: 17, backgroundColor: '#274C45', alignItems: 'center', justifyContent: 'center'}}>
@@ -196,15 +236,14 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, l
     <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 11, marginBottom: 17}}>
       <MetricCard label={t('Estimated budget', 'மதிப்பிடப்பட்ட பட்ஜெட்')} value={money(stats.totalBudget)} helper={`${t('Includes', 'இதில்')} ${money(stats.contingency)} ${t('contingency', 'எதிர்பாராத செலவு')}`} accent />
       <MetricCard label={t('Paid so far', 'இதுவரை செலுத்தியது')} value={money(stats.totalPaid)} helper={`${pctSpent.toFixed(1)}% ${t('of total budget', 'மொத்த பட்ஜெட்டில்')}`} />
+      <MetricCard label={t('Agreed contract value','ஒப்பந்தத் தொகை')} value={paymentsLoading?'…':paymentsError?'—':money(paymentSummary.contractValue)} helper={t('From saved agreements','சேமித்த ஒப்பந்தங்களிலிருந்து')} />
       <MetricCard label={t('Balance budget', 'மீதமுள்ள பட்ஜெட்')} value={money(stats.totalRemaining)} helper={t('Budget remaining', 'மீதமுள்ள தொகை')} />
       <MetricCard label={t('Construction progress', 'கட்டுமான முன்னேற்றம்')} value={`${Math.round(stats.progress)}%`} helper={t('Average across scheduled activities', 'திட்டமிட்ட பணிகளின் சராசரி')} />
     </View>
 
     <View style={cardStyle({marginBottom: 14})}>
       <SectionTitle title={t('Budget utilisation', 'பட்ஜெட் பயன்பாடு')} right={t('View breakdown', 'விரிவாகப் பார்க்க')} onRight={() => onOpen('floor_summary')} />
-      <View style={{height: 10, backgroundColor: '#EAF0EC', borderRadius: 8, overflow: 'hidden'}}>
-        <View style={{height: 10, width: `${pctSpent}%`, backgroundColor: C.green, borderRadius: 8}} />
-      </View>
+      <ProgressTrack value={pctSpent}/>
       <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 10}}>
         <Text style={{fontSize: 11, color: C.muted}}>{t('Paid', 'செலுத்தியது')} {money(stats.totalPaid)}</Text>
         <Text style={{fontSize: 11, color: C.muted}}>{t('Budget', 'பட்ஜெட்')} {money(stats.totalBudget)}</Text>
@@ -220,9 +259,7 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, l
             <Text style={{fontSize: 12, color: C.ink, fontWeight: '700'}}>{label}</Text>
             <Text style={{fontSize: 12, color: C.muted}}>{money(paid)} / {money(budget)}</Text>
           </View>
-          <View style={{height: 5, backgroundColor: '#EEF2EF', borderRadius: 5}}>
-            <View style={{height: 5, width: `${budget ? Math.min(100, paid / budget * 100) : 0}%`, backgroundColor: C.green, borderRadius: 5}}/>
-          </View>
+          <ProgressTrack value={budget ? Math.min(100, paid / budget * 100) : 0}/>
         </View>)}
       </View>
     </View>
@@ -240,6 +277,47 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, l
           {t('Across', 'மொத்தம்')} {meaningfulRows(sheets.daily_expenses || {values: [], formulas: [], name: '', range: ''}).length} {t('payment entries', 'கட்டணப் பதிவுகள்')}
         </Text>
       </View>
+    </View>
+
+    <View style={cardStyle({marginBottom: 14})}>
+      <SectionTitle title={t('Floor progress','தள முன்னேற்றம்')} right={t('View schedule','அட்டவணையைப் பார்க்க')} onRight={()=>onOpen('work_schedule')}/>
+      {floorProgress.map((item:any)=><View key={item.floor} style={{marginTop:8}}>
+        <View style={{flexDirection:'row',justifyContent:'space-between',marginBottom:5}}>
+          <Text style={{fontSize:12,fontWeight:'800',color:C.ink}}>{item.floor}</Text>
+          <Text style={{fontSize:12,fontWeight:'800',color:item.progress===null?C.muted:C.green}}>{item.progress===null?'—':`${Math.round(item.progress)}%`}</Text>
+        </View>
+        {item.progress===null?<Text style={{fontSize:11,color:C.muted}}>{t('No floor progress recorded','தள முன்னேற்றம் பதிவு செய்யப்படவில்லை')}</Text>:<ProgressTrack value={item.progress}/>}
+      </View>)}
+    </View>
+
+    <View style={cardStyle({marginBottom: 14})}>
+      <SectionTitle title={t('Recent payments','சமீபத்திய கொடுப்பனவுகள்')} right={t('All payments','அனைத்து கொடுப்பனவுகள்')} onRight={onViewPayments}/>
+      {paymentsLoading?<ActivityIndicator color={C.green}/>:paymentsError?<Text style={{fontSize:12,color:C.red}}>{t('Payment records are currently unavailable.','கொடுப்பனவு பதிவுகள் தற்போது கிடைக்கவில்லை.')}</Text>:recentPayments.length?recentPayments.map((payment:ProjectRecord)=><View key={payment.id} style={{paddingVertical:10,borderTopWidth:1,borderTopColor:C.line}}>
+        <View style={{flexDirection:'row',justifyContent:'space-between',gap:10}}>
+          <Text numberOfLines={1} style={{flex:1,fontSize:13,fontWeight:'800',color:C.ink}}>{payment.paymentTo||payment.person||t('Payee not provided','பெறுநர் வழங்கப்படவில்லை')}</Text>
+          <Text style={{fontSize:13,fontWeight:'900',color:C.green}}>{money(n(payment.amount))}</Text>
+        </View>
+        <Text style={{fontSize:11,color:C.muted,marginTop:4}}>{payment.date||t('Date not provided','தேதி வழங்கப்படவில்லை')} · {payment.paymentKind==='advance'?t('Advance','முன்பணம்'):payment.description||t('Payment','கொடுப்பனவு')}</Text>
+      </View>):<Text style={{fontSize:12,color:C.muted}}>{t('No project payments recorded yet.','திட்டக் கொடுப்பனவுகள் இன்னும் பதிவு செய்யப்படவில்லை.')}</Text>}
+    </View>
+
+    <View style={cardStyle({marginBottom: 14})}>
+      <SectionTitle title={t('Recent expenses','சமீபத்திய செலவுகள்')} right={t('Open expenses','செலவுகளைத் திற') } onRight={()=>onOpen('daily_expenses')}/>
+      {recentExpenses.length?recentExpenses.map((expense:any)=><View key={expense.id} style={{paddingVertical:10,borderTopWidth:1,borderTopColor:C.line}}>
+        <View style={{flexDirection:'row',justifyContent:'space-between',gap:10}}>
+          <Text numberOfLines={1} style={{flex:1,fontSize:13,fontWeight:'800',color:C.ink}}>{expense.description||expense.category||t('Expense','செலவு')}</Text>
+          <Text style={{fontSize:13,fontWeight:'900',color:C.ink}}>{money(expense.amount)}</Text>
+        </View>
+        <Text style={{fontSize:11,color:C.muted,marginTop:4}}>{expense.date||t('Date not provided','தேதி வழங்கப்படவில்லை')}{expense.payee?` · ${expense.payee}`:''}</Text>
+      </View>):<Text style={{fontSize:12,color:C.muted}}>{t('No expense entries recorded yet.','செலவுப் பதிவுகள் இன்னும் இல்லை.')}</Text>}
+    </View>
+
+    <View style={cardStyle({marginBottom: 14})}>
+      <SectionTitle title={t('Recent project activity','சமீபத்திய திட்டச் செயல்பாடு')} right={t('View all','அனைத்தையும் பார்க்க')} onRight={onViewActivity}/>
+      {activities.length?activities.slice(0,3).map((item:ActivityItem)=><View key={item.id} style={{paddingVertical:10,borderTopWidth:1,borderTopColor:C.line}}>
+        <Text style={{fontSize:13,fontWeight:'800',color:C.ink}}>{item.title||t('Project update','திட்டப் புதுப்பிப்பு')}</Text>
+        <Text numberOfLines={2} style={{fontSize:11,color:C.muted,marginTop:4}}>{item.body||t('Construction data was updated.','கட்டுமானத் தரவு புதுப்பிக்கப்பட்டது.')}</Text>
+      </View>):<Text style={{fontSize:12,color:C.muted}}>{t('No project activity is available yet.','திட்டச் செயல்பாடு இன்னும் இல்லை.')}</Text>}
     </View>
 
     <View style={cardStyle({marginBottom: 14})}>
@@ -263,13 +341,6 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, l
       </View>
     </View>
 
-    <View style={cardStyle({marginBottom: 14, paddingVertical: 13})}>
-      <SectionTitle title={t('Recent project updates', 'சமீபத்திய திட்டப் புதுப்பிப்புகள்')} />
-      {activities.length ? activities.slice(0, 3).map((item: ActivityItem) => <View key={item.id} style={{paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.line}}>
-        <Text style={{fontSize: 12, fontWeight: '800', color: C.ink}}>{item.title || t('Project updated', 'திட்டம் புதுப்பிக்கப்பட்டது')}</Text>
-        <Text style={{fontSize: 11, color: C.muted, marginTop: 3}}>{item.body || t('Workbook data changed', 'பணிப்புத்தகத் தரவு மாற்றப்பட்டது')}</Text>
-      </View>) : <Text style={{fontSize: 12, color: C.muted}}>{t('Updates will appear here after cloud sync is connected.', 'கிளவுட் ஒத்திசைப்பு இணைக்கப்பட்டதும் புதுப்பிப்புகள் இங்கே தோன்றும்.')}</Text>}
-    </View>
   </ScrollView>;
 }
 
@@ -522,7 +593,7 @@ function RowEditor({visible, sheetId, sheet, allSheets, rowIndex, isNew, onClose
         const h = headers[i] || '';
         if (isDateHeader(h) && v) row[i] = dateToExcelSerial(v);
         else if (v.trim() === '') row[i] = null;
-        else if (/qty|rate|amount|paid|balance|complete|duration|delay|contingency|area|%|fee/i.test(h) && /^-?\d+(\.\d+)?$/.test(v.trim())) row[i] = Number(v);
+        else if (/quantity|qty|rate|amount|paid|balance|complete|duration|delay|contingency|area|%|fee/i.test(h) && /^-?\d+(\.\d+)?$/.test(v.trim())) row[i] = Number(v);
         else row[i] = v;
       });
       next.values[rowIndex] = row;
@@ -685,7 +756,7 @@ function RowEditor({visible, sheetId, sheet, allSheets, rowIndex, isNew, onClose
                       value={values[i] || ''}
                       onChangeText={v => setValues(prev => {const next=[...prev]; next[i]=v; return next;})}
                       editable={!formula}
-                      keyboardType={isMoneyHeader(h) || /qty|complete|duration|delay|area|%/i.test(h) ? 'numeric' : 'default'}
+                      keyboardType={isMoneyHeader(h) || /quantity|qty|complete|duration|delay|area|%/i.test(h) ? 'numeric' : 'default'}
                       multiline={/notes|scope|specification/i.test(h)}
                       placeholder={language === 'ta' ? `${h} உள்ளிடவும்` : `Enter ${h.toLowerCase()}`}
                       placeholderTextColor="#9AA8A2"
@@ -744,9 +815,9 @@ function appendedSheet(sheetId: string, sheet: SheetDocument): {next: SheetDocum
   while (next.recordIds!.length < next.values.length) {
     next.recordIds!.push(`record_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
   }
-  const width = Math.max(next.values[0]?.length || 0, 1);
-  const row = Array(width).fill(null);
   const headers = headersForSheet(sheetId, sheet);
+  const width = Math.max(next.values[0]?.length || 0, headers.length, 1);
+  const row = Array(width).fill(null);
   const firstHeader = headers[0] || '';
   if (/id|s\.no\./i.test(firstHeader)) {
     const ids = next.values.slice(1).map(r => n(r[0]));
@@ -891,50 +962,86 @@ function ActivityScreen({activities, language, canClear, onClear}: any) {
 function LoginHistoryCard({uid, role}: {uid: string; role: 'owner'|'viewer'}) {
   const [entries, setEntries] = useState<LoginHistoryEntry[]>([]);
   const [error, setError] = useState('');
+  const [clearing, setClearing] = useState(false);
+
   useEffect(() => subscribeLoginHistory(uid, role, setEntries, setError), [uid, role]);
+
+  const confirmClear = () => {
+    if (role !== 'owner' || clearing) return;
+    Alert.alert(
+      'Clear login history?',
+      'Older login and device records will be deleted. The current owner device session will be retained so activity tracking can continue.',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Clear history',
+          style: 'destructive',
+          onPress: async () => {
+            setClearing(true);
+            try {
+              const count = await clearLoginHistory();
+              Alert.alert('History cleared', `${count} older login records were deleted.`);
+            } catch (e: any) {
+              Alert.alert('Could not clear history', e?.message || 'Please try again.');
+            } finally {
+              setClearing(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   return <View style={cardStyle({marginBottom: 12})}>
     <Text style={{fontSize:16,fontWeight:'800',color:C.ink}}>Login & device history</Text>
-    <Text style={{fontSize:11,color:C.muted,marginTop:5}}>{role==='owner'?'Recent sign-ins across project members.':'Recent sign-ins for this account.'} Device ID identifies this app installation, not a hardware serial number.</Text>
-    {error?<Text style={{fontSize:12,color:C.red,marginTop:9}}>{error}</Text>:entries.length===0?<Text style={{fontSize:12,color:C.muted,marginTop:9}}>No login history recorded yet. A new entry is created after the next verified sign-in.</Text>:entries.map(entry=><View key={entry.id} style={{borderTopWidth:1,borderTopColor:C.line,paddingTop:9,marginTop:9}}>
-      <Text style={{fontSize:13,fontWeight:'800',color:C.ink}}>{entry.displayName||entry.email||'Project member'} · {entry.role.toUpperCase()}</Text>
-      <Text style={{fontSize:11,color:C.muted,marginTop:3}}>{entry.email||'Email unavailable'} · {entry.deviceManufacturer} {entry.deviceModel}</Text>
-      <Text style={{fontSize:11,color:C.muted,marginTop:3}}>Login: {loginHistoryDate(entry.loginAt)}</Text>
-      <Text style={{fontSize:11,color:C.muted,marginTop:2}}>Last active: {loginHistoryDate(entry.lastActiveAt)}</Text>
-      <Text selectable style={{fontSize:10,color:C.muted,marginTop:2}}>App installation ID: {entry.installationId}</Text>
-    </View>)}
+    <Text style={{fontSize:11,color:C.muted,marginTop:5}}>
+      {role === 'owner'
+        ? 'Recent sign-ins across project members.'
+        : 'Recent sign-ins for this account.'}
+      {' '}Device ID identifies this app installation, not a hardware serial number.
+    </Text>
+    {role === 'owner' ? (
+      <TouchableOpacity
+        disabled={clearing}
+        onPress={confirmClear}
+        style={{backgroundColor:C.redBg,borderColor:'#EBCBC7',borderWidth:1,borderRadius:12,padding:12,marginTop:12,opacity:clearing?0.6:1}}
+      >
+        <Text style={{fontSize:12,fontWeight:'800',color:C.red,textAlign:'center'}}>
+          {clearing ? 'Clearing history…' : 'Clear older login history'}
+        </Text>
+      </TouchableOpacity>
+    ) : null}
+    {error ? <Text style={{fontSize:12,color:C.red,marginTop:9}}>{error}</Text>
+      : entries.length === 0
+        ? <Text style={{fontSize:12,color:C.muted,marginTop:9}}>No login history recorded yet. A new entry is created after the next verified sign-in.</Text>
+        : entries.map(entry => <View key={entry.id} style={{borderTopWidth:1,borderTopColor:C.line,paddingTop:9,marginTop:9}}>
+          <Text style={{fontSize:13,fontWeight:'800',color:C.ink}}>{entry.displayName||entry.email||'Project member'} · {entry.role.toUpperCase()}</Text>
+          <Text style={{fontSize:11,color:C.muted,marginTop:3}}>{entry.email||'Email unavailable'} · {entry.deviceManufacturer} {entry.deviceModel}</Text>
+          <Text style={{fontSize:11,color:C.muted,marginTop:3}}>Login: {loginHistoryDate(entry.loginAt)}</Text>
+          <Text style={{fontSize:11,color:C.muted,marginTop:2}}>Last active: {loginHistoryDate(entry.lastActiveAt)}</Text>
+          <Text selectable style={{fontSize:10,color:C.muted,marginTop:2}}>App installation ID: {entry.installationId}</Text>
+        </View>)}
   </View>;
 }
 
-function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed, onNotifications, onSignOut, onOriginal, language, onLanguageChange, onExportExcel, onExportPdf}: any) {
+function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed, onNotifications, onSignOut, onViewActivity, onOriginal, language, onLanguageChange, onExportExcel, onExportPdf}: any) {
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
+  const [diagnosticsError,setDiagnosticsError]=useState('');
   const runDiagnostics = async () => {
     setDiagnosticsBusy(true);
+    setDiagnosticsError('');
     try { setDiagnostics(await runProjectPermissionDiagnostics()); }
+    catch(error:any){setDiagnosticsError(error?.message||'Read-only checks could not complete.');}
     finally { setDiagnosticsBusy(false); }
   };
-  if (role === 'viewer') return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 35}}>
-    <View style={cardStyle({marginBottom: 12})}>
-      <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>Language / மொழி</Text>
-      <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>{t('Choose your preferred app language.', 'உங்களுக்கு விருப்பமான செயலி மொழியைத் தேர்ந்தெடுக்கவும்.')}</Text>
-      <View style={{borderWidth: 1, borderColor: C.line, borderRadius: 10, marginTop: 10, overflow: 'hidden'}}>
-        <Picker selectedValue={language} onValueChange={(value: 'en' | 'ta') => onLanguageChange(value)} style={{color: C.ink}}>
-          <Picker.Item label="English" value="en" />
-          <Picker.Item label="தமிழ்" value="ta" />
-        </Picker>
-      </View>
-    </View>
-    {user?.uid ? <LoginHistoryCard uid={user.uid} role="viewer"/> : null}
-    <TouchableOpacity onPress={onSignOut} style={{...buttonStyle(false, true), marginTop: 3}}>
-      <Text style={{color: C.red, fontWeight: '800'}}>{t('Sign out', 'வெளியேறு')}</Text>
-    </TouchableOpacity>
-  </ScrollView>;
-  return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 35}}>
+  const owner=role==='owner';
+  return <ScrollView contentContainerStyle={{padding: KSK_DESIGN.spacing.lg, paddingBottom: 35}}>
     <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>{t('Account & access', 'கணக்கு மற்றும் அணுகல்')}</Text>
       <Text style={{fontSize: 12, color: C.muted, marginTop: 9}}>{user?.email || t('Local workbook preview', 'உள்ளூர் பணிப்புத்தக முன்னோட்டம்')}</Text>
-      <View style={{flexDirection: 'row', gap: 8, marginTop: 12}}><Pill color={role === 'owner' ? C.green2 : C.blueBg} textColor={role === 'owner' ? C.green : '#365775'}>{role === 'owner' ? t('OWNER · EDITOR', 'உரிமையாளர் · திருத்துபவர்') : role === 'viewer' ? t('FATHER · READ ONLY', 'பார்வையாளர் · படிக்க மட்டும்') : t('PREVIEW', 'முன்னோட்டம்')}</Pill><Pill color={C.green2}>{cloudReady ? t('Cloud connected', 'கிளவுட் இணைக்கப்பட்டுள்ளது') : t('Cloud not connected', 'கிளவுட் இணைக்கப்படவில்லை')}</Pill></View>
+      <View style={{flexDirection: 'row', flexWrap:'wrap', gap: 8, marginTop: 12}}><Pill color={owner ? C.green2 : C.blueBg} textColor={owner ? C.green : '#365775'}>{owner ? t('OWNER · EDITOR', 'உரிமையாளர் · திருத்துபவர்') : role === 'viewer' ? t('VIEWER · READ ONLY', 'பார்வையாளர் · படிக்க மட்டும்') : t('PREVIEW', 'முன்னோட்டம்')}</Pill><Pill color={cloudReady ? C.green2 : C.goldBg} textColor={cloudReady?C.green:C.gold}>{cloudReady ? t('Cloud connected', 'கிளவுட் இணைக்கப்பட்டுள்ளது') : t('Cloud not connected', 'கிளவுட் இணைக்கப்படவில்லை')}</Pill></View>
       <Text style={{fontSize: 11, lineHeight: 18, color: C.muted, marginTop: 13}}>{t('The owner account can update every worksheet. A viewer account can read and receive notifications but cannot write to the project. Access is enforced by Firestore security rules, not just by hiding edit buttons.', 'உரிமையாளர் கணக்கு அனைத்து பணித்தாள்களையும் புதுப்பிக்கலாம். பார்வையாளர் கணக்கு தகவல்களைப் படிக்கவும் அறிவிப்புகளைப் பெறவும் முடியும்; ஆனால் திட்டத்தில் மாற்றங்களைச் செய்ய முடியாது. அணுகல் Firestore பாதுகாப்பு விதிகளால் கட்டுப்படுத்தப்படுகிறது.')}</Text>
     </View>
     <View style={cardStyle({marginBottom: 12})}>
@@ -952,6 +1059,14 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
       </View>
     </View>
 
+    <View style={cardStyle({marginBottom:12})}>
+      <SectionTitle title={t('Project activity','திட்டச் செயல்பாடு')} right={t('Open activity','செயல்பாட்டைத் திற')} onRight={onViewActivity}/>
+      <Text style={{fontSize:12,lineHeight:19,color:C.muted}}>{t('Review recent workbook updates and project changes.','சமீபத்திய பணிப்புத்தக புதுப்பிப்புகள் மற்றும் திட்ட மாற்றங்களைப் பார்க்கவும்.')}</Text>
+      <TouchableOpacity accessibilityRole="button" onPress={onViewActivity} style={{...buttonStyle(false,true),marginTop:12}}>
+        <Text style={{color:C.green,fontWeight:'800'}}>{t('View project activity','திட்டச் செயல்பாட்டைப் பார்க்க')}</Text>
+      </TouchableOpacity>
+    </View>
+
     {user?.uid && (role === 'owner' || role === 'viewer') ? <LoginHistoryCard uid={user.uid} role={role}/> : null}
 
     {role === 'owner' || role === 'viewer' ? <View style={cardStyle({marginBottom: 12})}>
@@ -960,6 +1075,7 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
       <TouchableOpacity disabled={diagnosticsBusy} onPress={()=>void runDiagnostics()} style={{...buttonStyle(diagnosticsBusy, true), marginTop: 11}}>
         {diagnosticsBusy ? <ActivityIndicator color={C.green}/> : <Text style={{color:C.green,fontWeight:'800'}}>{diagnostics ? 'Run checks again' : 'Run read-only checks'}</Text>}
       </TouchableOpacity>
+        {diagnosticsError?<Text style={{fontSize:11,color:C.red,marginTop:8}}>{diagnosticsError}</Text>:null}
       {diagnostics ? <View style={{marginTop:10}}>
         <Text style={{fontSize:11,color:C.ink}}>Firebase project: {diagnostics.firebaseProjectId} · Expected: {diagnostics.expectedFirebaseProjectId}</Text>
         <Text style={{fontSize:11,color:C.ink,marginTop:3}}>Membership: {diagnostics.membership} · Role: {diagnostics.role||'unverified'}</Text>
@@ -967,7 +1083,7 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
       </View>:null}
     </View>:null}
 
-    <View style={cardStyle({marginBottom: 12})}>
+    {owner?<View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>
         {t('Export project data', 'திட்டத் தரவை ஏற்றுமதி செய்க')}
       </Text>
@@ -990,14 +1106,14 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
           {t('Export all data to PDF (.pdf)', 'PDF கோப்பாக ஏற்றுமதி செய்க (.pdf)')}
         </Text>
       </TouchableOpacity>
-    </View>
+    </View>:null}
 
     <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>{t('Cloud workbook', 'கிளவுட் பணிப்புத்தகம்')}</Text>
       <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>{syncCount} {t('workbook sheets currently stored in the cloud.', 'பணித்தாள்கள் தற்போது கிளவுடில் சேமிக்கப்பட்டுள்ளன.')}</Text>
-      {role === 'owner' && cloudReady && syncCount === 0 ? <TouchableOpacity disabled={initialising} onPress={onSeed} style={{...buttonStyle(initialising), marginTop: 14}}>{initialising ? <ActivityIndicator color="#FFF"/> : <Text style={{color: '#FFF', fontWeight: '800'}}>{t('Import workbook to cloud', 'பணிப்புத்தகத்தை கிளவுடில் பதிவேற்றவும்')}</Text>}</TouchableOpacity> : null}
+      {owner && cloudReady && syncCount === 0 ? <TouchableOpacity disabled={initialising} onPress={onSeed} style={{...buttonStyle(initialising), marginTop: 14}}>{initialising ? <ActivityIndicator color="#FFF"/> : <Text style={{color: '#FFF', fontWeight: '800'}}>{t('Import workbook to cloud', 'பணிப்புத்தகத்தை கிளவுடில் பதிவேற்றவும்')}</Text>}</TouchableOpacity> : null}
       {role === 'viewer' && syncCount === 0 ? <Text style={{fontSize: 12, color: C.gold, marginTop: 12}}>{t('Waiting for the owner to import the workbook into the cloud.', 'உரிமையாளர் பணிப்புத்தகத்தை கிளவுடில் பதிவேற்றுவதற்காகக் காத்திருக்கிறது.')}</Text> : null}
-      <TouchableOpacity onPress={onOriginal} style={{...buttonStyle(false, true), marginTop: 10}}><Text style={{color: C.green, fontWeight: '800'}}>{t('Original Excel workbook included in project', 'அசல் Excel பணிப்புத்தகம் திட்டத்தில் சேர்க்கப்பட்டுள்ளது')}</Text></TouchableOpacity>
+      <TouchableOpacity accessibilityRole="button" onPress={onOriginal} style={{...buttonStyle(false, true), marginTop: 10}}><Text style={{color: C.green, fontWeight: '800'}}>{t('Original Excel workbook included in project', 'அசல் Excel பணிப்புத்தகம் திட்டத்தில் சேர்க்கப்பட்டுள்ளது')}</Text></TouchableOpacity>
     </View>
     <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>{t('Notifications', 'அறிவிப்புகள்')}</Text>
@@ -1019,6 +1135,9 @@ function AppContent() {
   const [cloudCount, setCloudCount] = useState(0);
   const [syncState, setSyncState] = useState('LOCAL PREVIEW');
   const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [dashboardRecords, setDashboardRecords] = useState<{payments:ProjectRecord[];contracts:ProjectRecord[]}>({payments:[],contracts:[]});
+  const [dashboardRecordsReady, setDashboardRecordsReady] = useState(false);
+  const [dashboardRecordsError, setDashboardRecordsError] = useState('');
   const [screen, setScreen] = useState<'Dashboard'|'Sheets'|'Expenses'|'Progress'|'Records'|'Activity'|'Settings'>('Dashboard');
   const [selectedSheet, setSelectedSheet] = useState('');
   const [editingRow, setEditingRow] = useState<number | null>(null);
@@ -1151,6 +1270,44 @@ function AppContent() {
     return () => {stopSheets(); stopActivity();};
   }, [user, role]);
 
+  useEffect(()=>{
+    if(!user||!role||demoMode||!db){
+      setDashboardRecords({payments:[],contracts:[]});
+      setDashboardRecordsReady(true);
+      setDashboardRecordsError('');
+      return;
+    }
+    if(screen!=='Dashboard')return;
+    let active=true;
+    const settled={payments:false,contracts:false};
+    const markReady=(type:'payments'|'contracts')=>{
+      if(!active||settled[type])return;
+      settled[type]=true;
+      if(settled.payments&&settled.contracts)setDashboardRecordsReady(true);
+    };
+    setDashboardRecordsReady(false);
+    setDashboardRecordsError('');
+    const stopPayments=subscribeProjectRecords('payments',rows=>{
+      if(!active)return;
+      setDashboardRecords(current=>({...current,payments:rows}));
+      markReady('payments');
+    },message=>{
+      if(!active)return;
+      setDashboardRecordsError(message);
+      markReady('payments');
+    },user.uid);
+    const stopContracts=subscribeProjectRecords('contracts',rows=>{
+      if(!active)return;
+      setDashboardRecords(current=>({...current,contracts:rows}));
+      markReady('contracts');
+    },message=>{
+      if(!active)return;
+      setDashboardRecordsError(message);
+      markReady('contracts');
+    },user.uid);
+    return ()=>{active=false;stopPayments();stopContracts();};
+  },[user?.uid,role,demoMode,screen]);
+
   const signIn = async (email: string, password: string) => {
     try {
       if (!auth) throw new Error('Firebase configuration is missing.');
@@ -1167,7 +1324,7 @@ function AppContent() {
   };
 
   const openSheet = (id: string) => {
-    if (role !== 'owner') return;
+    if (role !== 'owner' && role !== 'viewer' && !demoMode) return;
     setSelectedSheet(id);
     setScreen('Sheets');
   };
@@ -1521,7 +1678,7 @@ function AppContent() {
         : screen;
 
   const renderScreen = () => {
-    if (screen === 'Dashboard') return <Dashboard sheets={sheets} activities={activities} role={canEdit ? 'owner' : role} syncLabel={syncLabel} onOpen={openSheet} onAddExpense={addExpense} language={language} />;
+    if (screen === 'Dashboard') return <Dashboard sheets={sheets} activities={activities} payments={dashboardRecords.payments} contracts={dashboardRecords.contracts} paymentsLoading={!dashboardRecordsReady} paymentsError={dashboardRecordsError} role={canEdit ? 'owner' : role} syncLabel={syncLabel} onOpen={openSheet} onAddExpense={addExpense} onViewPayments={()=>{setScreen('Records');setSelectedSheet('');}} onViewActivity={()=>setScreen('Activity')} language={language} />;
     if (screen === 'Sheets') {
       if (!selectedSheet) return <SheetMenu onOpen={openSheet} language={language} />;
       if (selectedSheet === 'quotation_compare' && !sheets.quotation_compare) {
@@ -1533,7 +1690,7 @@ function AppContent() {
     if (screen === 'Progress') return <View style={{flex:1}}><SheetView sheetId="work_schedule" sheet={sheets.work_schedule} allSheets={sheets} role={canEdit ? 'owner' : role} language={language} onBack={() => setScreen('Dashboard')} onEdit={(index: number) => startEdit('work_schedule', index)} onAdd={() => startAdd('work_schedule')} onDelete={(index: number) => deleteRecord('work_schedule', index)} /></View>;
     if (screen === 'Records') return user && !demoMode ? <ProjectRecords uid={user.uid} owner={canEdit} sheets={sheets} sheetsLoaded={cloudSheetsLoaded} sheetsReady={cloudSheetsLoaded} /> : <View style={{padding:20}}><Text style={{color:C.muted}}>Sign in to use synced project records.</Text></View>;
     if (screen === 'Activity') return <ActivityScreen activities={activities} language={language} canClear={canEdit} onClear={handleClearActivity}/>;
-    return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} language={language} onLanguageChange={changeLanguage} onExportExcel={exportExcel} onExportPdf={exportPdf}/>;
+    return <SettingsScreen role={canEdit ? 'owner' : role} user={user} syncCount={cloudCount} cloudReady={!!db && !demoMode} initialising={initialising} onSeed={doSeed} onNotifications={doNotifications} onSignOut={performSignOut} onViewActivity={()=>setScreen('Activity')} onOriginal={() => Alert.alert('Original workbook', 'KSK_House_Cost.xlsx is included unchanged in the app project at assets/KSK_House_Cost.xlsx.')} language={language} onLanguageChange={changeLanguage} onExportExcel={exportExcel} onExportPdf={exportPdf}/>;
   };
 
   return <SafeAreaView style={{flex: 1, backgroundColor: C.paper}}>
@@ -1550,28 +1707,27 @@ function AppContent() {
     </View>
     <View style={{flex:1}}>{renderScreen()}</View>
 
-<View style={{height:72, backgroundColor:C.white, borderTopColor:C.line, borderTopWidth:1, flexDirection:'row', alignItems:'center', paddingHorizontal:3, shadowColor:C.dark, shadowOpacity:0.06, shadowRadius:10, shadowOffset:{width:0,height:-3}, elevation:8}}>
-  {(role === 'viewer' ? [
-    ['Dashboard','⌂','Dashboard',''],
-    ['Expenses','₹','Daily Expenses','daily_expenses'],
-    ['Records','▤','Payment Records',''],
+<View style={{height:72, backgroundColor:C.white, borderTopColor:C.line, borderTopWidth:1, flexDirection:'row', alignItems:'center', paddingHorizontal:6, ...KSK_DESIGN.elevation.navigation}}>
+  {[
+    ['Dashboard','⌂','Home',''],
+    ['Sheets','▦','Materials',''],
+    ['Expenses','₹','Expenses','daily_expenses'],
+    ['Records','▤','Records',''],
     ['Settings','☰','Settings','']
-  ] : [
-    ['Dashboard','⌂','Dashboard',''],
-    ['Sheets','⚙','Project Setup','project_setup'],
-    ['Expenses','₹','Daily Expenses','daily_expenses'],
-    ['Sheets','▦','Floor Summary','floor_summary'],
-    ['Records','▤','Project Records',''],
-    ['Activity','◷','Activity',''],
-    ['Settings','☰','Settings','']
-  ]).map(([id,icon,label,sheetId]) => {
+  ].map(([id,icon,label,sheetId]) => {
     const active = id === 'Sheets'
-      ? screen === 'Sheets' && selectedSheet === sheetId
-      : screen === id;
+      ? screen === 'Sheets'
+      : id === 'Settings'
+        ? screen === 'Settings' || screen === 'Activity'
+        : screen === id;
 
     return (
       <TouchableOpacity
         key={label}
+        accessibilityRole="button"
+        accessibilityState={{selected:active}}
+        accessibilityLabel={label}
+        hitSlop={4}
         onPress={() => {
           setScreen(id as any);
           setSelectedSheet(sheetId);
@@ -1580,22 +1736,22 @@ function AppContent() {
           flex:1,
           alignItems:'center',
           justifyContent:'center',
-          height:58,
+          height:60,
           minWidth:0,
-          marginHorizontal:2,
-          borderRadius:14,
+          marginHorizontal:3,
+          borderRadius:KSK_DESIGN.radius.md,
           backgroundColor:active ? C.green2 : 'transparent'
         }}
       >
         <Text style={{
-          fontSize:18,
+          fontSize:20,
           color:active ? C.green : '#82918B',
           fontWeight:'800'
         }}>
           {icon}
         </Text>
         <Text style={{
-          fontSize:8,
+          fontSize:10,
           marginTop:3,
           color:active ? C.green : C.muted,
           fontWeight:active ? '900' : '600',
@@ -1604,11 +1760,10 @@ function AppContent() {
           {language === 'ta'
             ? ({
                 Dashboard:'முகப்பு',
-                'Project Setup':'திட்ட அமைப்பு',
-                'Daily Expenses':'தினசரி செலவுகள்',
-                'Floor Summary':'தளச் சுருக்கம்',
-                Activity:'செயல்பாடு',
-                'Project Records':'திட்டப் பதிவுகள்',
+                Home:'முகப்பு',
+                Materials:'பொருட்கள்',
+                Expenses:'செலவுகள்',
+                Records:'பதிவுகள்',
                 Settings:'அமைப்புகள்'
               } as Record<string,string>)[label] || label
             : label}

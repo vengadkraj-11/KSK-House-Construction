@@ -2,10 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
 import {Platform} from 'react-native';
 import {
-  addDoc, collection, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where
+  addDoc, collection, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where, writeBatch
 } from 'firebase/firestore';
 import {User} from 'firebase/auth';
-import {db} from '../firebase';
+import {auth, db} from '../firebase';
 
 const PROJECT_ID = 'ksk';
 const INSTALLATION_KEY = 'ksk.house.installation-id.v1';
@@ -64,6 +64,31 @@ export function subscribeLoginHistory(
   }, error => onError(error?.code === 'permission-denied'
     ? 'Login history permission denied. Deploy the updated Firestore rules.'
     : error?.message || 'Could not load login history.'));
+}
+
+
+export async function clearLoginHistory(): Promise<number> {
+  if (!db || !auth?.currentUser) {
+    throw new Error('Sign in before clearing login history.');
+  }
+
+  const currentUid = auth.currentUser.uid;
+  const currentInstallationId = await getInstallationId();
+  const snapshot = await getDocs(collection(db, 'projects', PROJECT_ID, 'login_history'));
+
+  // Keep this device's active session so its last-active timestamp can continue updating.
+  const oldSessions = snapshot.docs.filter(item => {
+    const data = item.data();
+    return !(data.userId === currentUid && data.installationId === currentInstallationId);
+  });
+
+  for (let offset = 0; offset < oldSessions.length; offset += 450) {
+    const batch = writeBatch(db);
+    oldSessions.slice(offset, offset + 450).forEach(item => batch.delete(item.ref));
+    await batch.commit();
+  }
+
+  return oldSessions.length;
 }
 
 function timestampMillis(value: any): number {
