@@ -77,18 +77,18 @@ function pretty(value: any, header = ''): string {
   return String(value);
 }
 
-function cardStyle(extra: any = {}) { return {backgroundColor: C.white, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: C.line, ...extra}; }
+function cardStyle(extra: any = {}) { return {backgroundColor: C.white, borderRadius: 22, padding: 18, borderWidth: 1, borderColor: '#E5ECE7', shadowColor: C.dark, shadowOpacity: 0.055, shadowRadius: 12, shadowOffset: {width: 0, height: 5}, elevation: 2, ...extra}; }
 function buttonStyle(disabled = false, secondary = false) {
-  return {backgroundColor: disabled ? '#DCE4DF' : secondary ? C.green2 : C.green, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 15, alignItems: 'center' as const, justifyContent: 'center' as const};
+  return {backgroundColor: disabled ? '#DCE4DF' : secondary ? C.green2 : C.green, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 16, alignItems: 'center' as const, justifyContent: 'center' as const};
 }
 
 function Pill({children, color = C.green2, textColor = C.green}: any) {
-  return <View style={{backgroundColor: color, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5}}><Text style={{fontSize: 11, fontWeight: '800', color: textColor}}>{children}</Text></View>;
+  return <View style={{backgroundColor: color, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6}}><Text style={{fontSize: 11, fontWeight: '800', color: textColor}}>{children}</Text></View>;
 }
 
 function SectionTitle({title, right, onRight}: any) {
   return <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
-    <Text style={{fontSize: 17, fontWeight: '800', color: C.ink}}>{title}</Text>
+    <Text style={{fontSize: 16, fontWeight: '900', color: C.ink, letterSpacing: -0.2}}>{title}</Text>
     {right ? <TouchableOpacity onPress={onRight}><Text style={{color: C.green, fontWeight: '800', fontSize: 12}}>{right}</Text></TouchableOpacity> : null}
   </View>;
 }
@@ -129,9 +129,9 @@ function LoginScreen({onLogin, demo}: {onLogin: (email: string, password: string
 }
 
 function MetricCard({label, value, helper, accent = false}: any) {
-  return <View style={cardStyle({flex: 1, minWidth: 145, padding: 15, backgroundColor: accent ? C.dark : C.white, borderColor: accent ? C.dark : C.line})}>
-    <Text style={{fontSize: 11, color: accent ? '#C7DAD2' : C.muted, fontWeight: '700'}}>{label.toUpperCase()}</Text>
-    <Text style={{fontSize: 22, color: accent ? '#FFFFFF' : C.ink, fontWeight: '900', marginTop: 8}}>{value}</Text>
+  return <View style={cardStyle({flex: 1, minWidth: 148, padding: 16, borderRadius: 20, backgroundColor: accent ? C.dark : C.white, borderColor: accent ? C.dark : '#E5ECE7'})}>
+    <Text style={{fontSize: 10, color: accent ? '#C7DAD2' : C.muted, fontWeight: '800', letterSpacing: 0.65}}>{label.toUpperCase()}</Text>
+    <Text style={{fontSize: 21, color: accent ? '#FFFFFF' : C.ink, fontWeight: '900', marginTop: 9, letterSpacing: -0.5}}>{value}</Text>
     {helper ? <Text style={{fontSize: 11, color: accent ? '#C7DAD2' : C.muted, marginTop: 5}}>{helper}</Text> : null}
   </View>;
 }
@@ -159,8 +159,8 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, l
       } as Record<string, string>)[syncLabel] || syncLabel
     : syncLabel;
 
-  return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 30}}>
-    <View style={{backgroundColor: C.dark, borderRadius: 22, padding: 19, marginBottom: 15}}>
+  return <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{padding: 16, paddingBottom: 36}}>
+    <View style={{backgroundColor: C.dark, borderRadius: 26, padding: 21, marginBottom: 17, shadowColor: C.dark, shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: {width: 0, height: 8}, elevation: 5, borderWidth: 1, borderColor: '#294B44'}}>
       <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
         <View>
           <Text style={{color: '#BBD1C8', fontSize: 11, fontWeight: '800', letterSpacing: 1}}>
@@ -193,7 +193,7 @@ function Dashboard({sheets, activities, role, syncLabel, onOpen, onAddExpense, l
       </View>
     </View>
 
-    <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 15}}>
+    <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 11, marginBottom: 17}}>
       <MetricCard label={t('Estimated budget', 'மதிப்பிடப்பட்ட பட்ஜெட்')} value={money(stats.totalBudget)} helper={`${t('Includes', 'இதில்')} ${money(stats.contingency)} ${t('contingency', 'எதிர்பாராத செலவு')}`} accent />
       <MetricCard label={t('Paid so far', 'இதுவரை செலுத்தியது')} value={money(stats.totalPaid)} helper={`${pctSpent.toFixed(1)}% ${t('of total budget', 'மொத்த பட்ஜெட்டில்')}`} />
       <MetricCard label={t('Balance budget', 'மீதமுள்ள பட்ஜெட்')} value={money(stats.totalRemaining)} helper={t('Budget remaining', 'மீதமுள்ள தொகை')} />
@@ -1538,19 +1538,19 @@ function AppContent() {
 
   return <SafeAreaView style={{flex: 1, backgroundColor: C.paper}}>
     <StatusBar barStyle="dark-content" backgroundColor={C.paper}/>
-    <View style={{height: 58, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.paper}}>
+    <View style={{height: 64, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.white}}>
       <View style={{flexDirection:'row', alignItems:'center', gap:10}}>
-        <View style={{width:36,height:36,borderRadius:12,backgroundColor:C.dark,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#FFF',fontWeight:'900',fontSize:12}}>KSK</Text></View>
+        <View style={{width:40,height:40,borderRadius:14,backgroundColor:C.dark,alignItems:'center',justifyContent:'center',shadowColor:C.dark,shadowOpacity:0.12,shadowRadius:7,shadowOffset:{width:0,height:3},elevation:2}}><Text style={{color:'#FFF',fontWeight:'900',fontSize:12}}>KSK</Text></View>
         <View><Text style={{fontSize:15,fontWeight:'900',color:C.ink}}>KSK House</Text><Text style={{fontSize:10,color:C.muted}}>{headerSubtitle}</Text></View>
       </View>
-      <View style={{flexDirection:'row',alignItems:'center',gap:10}}>
+      <View style={{flexDirection:'row',alignItems:'center',gap:7,backgroundColor:syncLabel === 'LIVE SYNC' ? C.green2 : C.goldBg,paddingHorizontal:10,paddingVertical:7,borderRadius:999}}>
         <View style={{width:7,height:7,borderRadius:6,backgroundColor:syncLabel === 'LIVE SYNC' ? '#2B9A69' : C.gold}}/>
         <Text style={{fontSize:10,fontWeight:'800',color:C.muted}}>{language === 'ta' ? (syncLabel === 'LIVE SYNC' ? 'நேரலை' : syncLabel === 'SAVING' ? 'சேமிப்பு' : 'முன்னோட்டம்') : (syncLabel === 'LIVE SYNC' ? 'LIVE' : syncLabel === 'SAVING' ? 'SAVING' : 'PREVIEW')}</Text>
       </View>
     </View>
     <View style={{flex:1}}>{renderScreen()}</View>
 
-<View style={{height:66, backgroundColor:C.white, borderTopColor:C.line, borderTopWidth:1, flexDirection:'row', alignItems:'center', paddingHorizontal:2}}>
+<View style={{height:72, backgroundColor:C.white, borderTopColor:C.line, borderTopWidth:1, flexDirection:'row', alignItems:'center', paddingHorizontal:3, shadowColor:C.dark, shadowOpacity:0.06, shadowRadius:10, shadowOffset:{width:0,height:-3}, elevation:8}}>
   {(role === 'viewer' ? [
     ['Dashboard','⌂','Dashboard',''],
     ['Expenses','₹','Daily Expenses','daily_expenses'],
@@ -1581,7 +1581,10 @@ function AppContent() {
           alignItems:'center',
           justifyContent:'center',
           height:58,
-          minWidth:0
+          minWidth:0,
+          marginHorizontal:2,
+          borderRadius:14,
+          backgroundColor:active ? C.green2 : 'transparent'
         }}
       >
         <Text style={{
@@ -1592,11 +1595,12 @@ function AppContent() {
           {icon}
         </Text>
         <Text style={{
-          fontSize:9,
+          fontSize:8,
           marginTop:3,
           color:active ? C.green : C.muted,
-          fontWeight:active ? '900' : '600'
-        }}>
+          fontWeight:active ? '900' : '600',
+          letterSpacing:-0.2
+        }} numberOfLines={1}>
           {language === 'ta'
             ? ({
                 Dashboard:'முகப்பு',
