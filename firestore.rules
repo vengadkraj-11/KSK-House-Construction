@@ -172,6 +172,40 @@ service cloud.firestore {
       allow update, delete: if isOwner(projectId);
     }
 
+    // Login sessions: each member can create and update only their own
+    // session's last-active timestamp. Owners can review project-wide history.
+    match /projects/{projectId}/login_history/{sessionId} {
+      allow read: if isOwner(projectId)
+        || (hasProjectAccess(projectId) && resource.data.userId == request.auth.uid);
+      allow create: if hasProjectAccess(projectId)
+        && request.resource.data.keys().hasAll([
+          'userId', 'email', 'displayName', 'role', 'installationId',
+          'deviceModel', 'deviceManufacturer', 'deviceName', 'platform',
+          'loginAt', 'lastActiveAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'userId', 'email', 'displayName', 'role', 'installationId',
+          'deviceModel', 'deviceManufacturer', 'deviceName', 'platform',
+          'loginAt', 'lastActiveAt'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.role == memberRole(projectId)
+        && request.resource.data.loginAt == request.time
+        && request.resource.data.lastActiveAt == request.time
+        && request.resource.data.installationId is string
+        && request.resource.data.email is string
+        && request.resource.data.displayName is string
+        && request.resource.data.deviceModel is string
+        && request.resource.data.deviceManufacturer is string
+        && request.resource.data.deviceName is string
+        && request.resource.data.platform is string;
+      allow update: if hasProjectAccess(projectId)
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAt'])
+        && request.resource.data.lastActiveAt == request.time;
+      allow delete: if isOwner(projectId);
+    }
+
     match /projects/{projectId}/activity/{activityId} {
       allow read: if hasProjectAccess(projectId);
 

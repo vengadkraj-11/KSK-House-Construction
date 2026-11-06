@@ -9,6 +9,7 @@ import {renderReceiptSection} from './reportReceipts';
 import {ProjectRecord} from './projectRecords';
 import {summarizeContracts, summarizeInventory} from './recordMath';
 import {paymentStatementAgreements, paymentStatementLedger, summarizePaymentRecords} from './paymentMath';
+import {downloadBase64File, printHtmlInBrowser} from './webFiles';
 
 type Records=Record<string,ProjectRecord[]>;
 const amount=(row:ProjectRecord)=>Number(row.amount)||0;
@@ -61,6 +62,7 @@ export async function exportProjectReports(records:Records,sheets:any={},section
     {Source:'Sources are separate; do not add both if structured records duplicate workbook history',Entries:'',Total:''}
   ]);
   const base64=XLSX.write(workbook,{bookType:'xlsx',type:'base64'});
+  if(downloadBase64File(base64,`KSK_Project_Reports_${new Date().toISOString().slice(0,10)}.xlsx`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'))return;
   if(!FileSystem.cacheDirectory)throw new Error('Local cache is unavailable.');
   const uri=`${FileSystem.cacheDirectory}KSK_Project_Reports_${new Date().toISOString().slice(0,10)}.xlsx`;
   await FileSystem.writeAsStringAsync(uri,base64,{encoding:FileSystem.EncodingType.Base64});
@@ -94,6 +96,7 @@ export async function exportProjectReportPdf(records:Records,sheets:any={},secti
   const receiptHtml=renderReceiptSection(attachments);
   const paymentRows=payments.map(row=>({Date:row.date||'',Voucher:row.voucherNumber||'',PaymentTo:row.paymentTo||row.person||'',Description:row.description||'',Category:row.category||'',Floor:row.floor||'',WorkStage:row.stage||'',Amount:currency(row.amount),PaidBy:row.paidBy||'',Mode:row.method||'',ReceivedBy:row.receivedBy||'',Reference:row.reference||'',Agreement:row.contractId||'',Notes:row.notes||'',SourceVoucher:row.sourceExpenseId?'Daily Expenses':'Standalone'}));
   const html=`<html><head><meta name="viewport" content="width=device-width, initial-scale=1"/><style>@page{margin:14mm}body{font-family:Arial,sans-serif;color:#18352b;padding:12px}h1{font-size:22px}h2{font-size:15px;margin-top:22px;page-break-after:avoid}table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:8px;page-break-inside:auto}thead{display:table-header-group}tr{page-break-inside:avoid}th,td{border:1px solid #cfd8d2;padding:4px;text-align:left;overflow-wrap:anywhere;word-break:break-word}th{background:#e6f1ec}header{border-bottom:3px solid #176b4b;padding-bottom:10px;margin-bottom:12px}header img{width:54px;height:54px;object-fit:contain;float:left;margin-right:12px}.receipt{page-break-inside:avoid;border:1px solid #ccd8d0;padding:10px;margin:10px 0}.receipt img{display:block;max-width:90%;max-height:620px;object-fit:contain;margin:8px auto}</style></head><body><header>${logo?`<img src="data:image/png;base64,${logo}"/>`:''}<h1>${esc(projectName)}</h1><b>KSK · Financial & Site Report</b><p>${esc(location)} · Generated ${esc(new Date().toLocaleString())}</p><div style="clear:both"></div></header>${table('Financial summary',financialSummary)}${table('Project Records load status',pdfStatus.map(section=>({Section:section.name,Status:section.state,Details:section.error||''})))}${table('Structured payment ledger',paymentRows)}${table('Daily Expenses · source workbook records',workbookRows.map(row=>({Date:row.date,Voucher:row.voucherNumber,Floor:row.floor,Stage:row.stage,Category:row.category,Description:row.description,Vendor:row.person,Amount:currency(row.amount),Mode:row.method,PaidBy:row.paidBy,ReceivedBy:row.receivedBy,BillReceived:row.billReceived,Notes:row.notes,SourceId:row.id})))}${table('Agreement balances · advances and subsequent payments',agreements)}${table('Stock on hand',stock.map(row=>({Material:row.material,Unit:row.unit,Ordered:row.purchased,Received:row.received,ReturnedToStock:row.returnedToStock,ReturnedToSupplier:row.returnedToSupplier,Used:row.used,Wastage:row.wastage,Available:row.available,LowStockLevel:row.lowStockLevel,LowStock:row.lowStock,Supplier:row.supplier,Rate:row.rate})))}${table(`Work progress · average ${averageProgress.toFixed(1)}% · delayed ${delayed}`,progress.map(row=>({Activity:row.stage,Floor:row.floor,Percent:row.percent,Planned:row.plannedDate,Actual:row.actualDate,Responsible:row.responsiblePerson,Notes:row.notes||''})))}${table('Site diary', (records.diary||[]).map(row=>({Date:row.date||'',Title:row.title||'',Floor:row.floor||'',Work:row.stage||'',Attendance:row.attendance||'',Issues:row.issues||'',Decisions:row.decisions||'',Notes:row.description||'',RecordId:row.id||''})))}${table('Approvals and reminders', [...(records.approvals||[]).map(row=>({Type:'Approval',Title:row.expenseRef||row.title||'',Status:row.status||'',Date:row.createdAt?.toDate?.()?.toISOString?.()||'',Notes:row.requestNote||row.decisionNote||''})),...(records.reminders||[]).map(row=>({Type:'Reminder',Title:row.title||'',Status:row.status||'',Date:row.dueDate||'',Notes:row.notes||''}))])}${receiptHtml}</body></html>`;
+  if(printHtmlInBrowser(html))return;
   const result=await Print.printToFileAsync({html});
   if(!(await Sharing.isAvailableAsync()))throw new Error('File sharing is unavailable on this device.');
   await Sharing.shareAsync(result.uri,{mimeType:'application/pdf',dialogTitle:'Export KSK project report'});
@@ -150,6 +153,7 @@ async function receiptImagesForPayments(payments:ProjectRecord[]){
   return result;
 }
 async function sharePdf(html:string,title:string){
+  if(printHtmlInBrowser(html))return;
   const result=await Print.printToFileAsync({html});
   if(!(await Sharing.isAvailableAsync()))throw new Error('File sharing is unavailable on this device.');
   await Sharing.shareAsync(result.uri,{mimeType:'application/pdf',dialogTitle:title});
@@ -175,8 +179,11 @@ export async function exportPaymentReceiptPdf(payment:ProjectRecord,sheets:any={
       :error?.message||'Receipt images could not be loaded.';
   }
 
-  const detailRows=[['Payment to',recipient],['Payment by',blank(payment.paidBy)],['Payment mode',blank(payment.method)],['Agreed amount',agreed===null?'Not provided':paymentMoney(agreed,currency)]];
-  const transactionRows=ordered.map(row=>`<tr><td>${htmlEscape(blank(row.date))}</td><td>${htmlEscape(blank(row.description))}</td><td class="money">${paymentMoney(row.amount,String(row.currency||currency))}</td></tr>`).join('');
+  const detailRows=[['Payment to',recipient],['Paid by',blank(payment.paidBy)],['Mode',blank(payment.method)]];
+  const agreement=contracts.find(row=>String(row.id||'')===String(payment.contractId||''));
+  const agreementDate=blank(agreement?.startDate)||'—';
+  const transactionRows=[...(agreed===null?[]:[`<tr class="agreement-row"><td>${htmlEscape(agreementDate)}</td><td>Agreed amount</td><td class="money">${paymentMoney(agreed,currency)}</td></tr>`]),...ordered.map(row=>`<tr><td>${htmlEscape(blank(row.date))}</td><td>${htmlEscape(`${String(row.paymentKind||'payment').toLowerCase()==='advance'?'Advance':'Payment'}${row.description?` · ${row.description}`:''}`)}</td><td class="money">−${paymentMoney(row.amount,String(row.currency||currency))}</td></tr>`)].join('');
+  const remaining=balance===null?null:Math.max(0,balance);
 
   const evidence=images.length
     ? `<section class="receipt"><h2>Bill / Receipt Attachment</h2>${renderReceiptSection(images)}</section>`
@@ -202,7 +209,7 @@ body{font-family:Arial,Helvetica,sans-serif;color:#26352e;font-size:10pt;line-he
 table{width:100%;border-collapse:collapse;margin:0 0 15px}
 td{padding:7px 9px;border-bottom:1px solid #e2e8e4;vertical-align:top}.money{text-align:right;white-space:nowrap}table.history{font-size:9pt}table.history th{background:#e6f1ec;color:#26352e;text-align:left;padding:8px}table.history td{border:1px solid #e2e8e4}
 td:first-child{width:35%;color:#65736b}
-.amount-box{background:#eef5f1;border:1px solid #d6e5dc;border-radius:5px;padding:13px 15px;margin:17px 0}
+.amount-box{background:#eef5f1;border:1px solid #d6e5dc;border-radius:5px;padding:13px 15px;margin:17px 0}.agreement-row{background:#f7faf8;font-weight:700}
 .amount-label{font-size:8pt;color:#65736b;font-weight:700;letter-spacing:.5px}
 .amount-value{font-size:23pt;font-weight:700;color:#176b4b;margin-top:3px}
 .notes{margin-top:12px;font-size:9pt}
@@ -219,22 +226,22 @@ td:first-child{width:35%;color:#65736b}
 <header class="header">
   <div class="brand">${htmlEscape(projectName)}</div>
   ${location?`<div class="location">${htmlEscape(location)}</div>`:''}
-  <div class="heading">PAYMENT STATEMENT</div>
+  <div class="heading">PAYMENT RECEIPT</div>
 </header>
 <div class="section-title">PAYMENT INFORMATION</div>
 <table>
   ${detailRows.map(([label,value])=>`<tr><td>${htmlEscape(label)}</td><td>${htmlEscape(value)}</td></tr>`).join('')}
 </table>
-<div class="section-title">PAYMENT HISTORY</div>
+<div class="section-title">AGREEMENT &amp; PAYMENT LEDGER</div>
 <table class="history"><thead><tr><th>Date</th><th>Description</th><th class="money">Amount</th></tr></thead><tbody>${transactionRows||'<tr><td colspan="3">No saved payments</td></tr>'}</tbody></table>
-<div class="amount-box"><div>Agreed amount: <strong>${agreed===null?'Not provided':paymentMoney(agreed,currency)}</strong></div><div>Total paid: <strong>${paymentMoney(totalPaid,currency)}</strong></div><div>Remaining balance: <strong>${balance===null?'Not provided':paymentMoney(balance,currency)}</strong></div></div>
-<div class="footer">${htmlEscape(projectName)} · Payment statement</div>
+<div class="amount-box"><div class="amount-label">REMAINING AMOUNT</div><div class="amount-value">${remaining===null?'Not provided':paymentMoney(remaining,currency)}</div>${balance!==null&&balance<0?`<div class="muted">Overpaid: ${paymentMoney(Math.abs(balance),currency)}</div>`:''}</div>
+<div class="footer">${htmlEscape(projectName)} · Payment receipt</div>
 
 ${evidence}
 </body>
 </html>`;
 
-  await sharePdf(html,`Payment statement ${id}`);
+  await sharePdf(html,`KSK Payment Receipt ${id}`);
 }
 export async function exportPaymentStatementPdf(
   payments:ProjectRecord[],
@@ -357,7 +364,7 @@ table.history th:last-child,table.history td:last-child{text-align:right}
 <tr><td>Payment mode</td><td>${htmlEscape(paymentMode)}</td></tr>
 </table>
 
-<div class="section-title">PAYMENT HISTORY</div>
+<div class="section-title">AGREEMENT &amp; PAYMENT LEDGER</div>
 <table class="history">
 <thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
 <tbody>${transactionRows||'<tr><td colspan="3">No payments found.</td></tr>'}</tbody>
@@ -380,7 +387,7 @@ ${accountBalances.length>1?`<div class="section-title">AGREEMENT BALANCES</div><
 </div>
 </div>
 
-<div class="footer">${htmlEscape(projectName)} · Payment statement</div>
+<div class="footer">${htmlEscape(projectName)} · Payment receipt</div>
 ${evidence}
 </body>
 </html>`;

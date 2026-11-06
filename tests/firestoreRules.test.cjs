@@ -32,6 +32,8 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   await seed('projects/ksk/progress/progress1',{stage:stringValue('Foundation'),percent:numberValue(50)});
   await seed('projects/ksk/diary/diary1',{title:stringValue('Site note')});
   await seed('projects/ksk/reminders/reminder1',{title:stringValue('Inspection')});
+  await seed('projects/ksk/login_history/owner-session',{userId:stringValue('owner'),role:stringValue('owner'),email:stringValue('owner@example.test'),displayName:stringValue('Owner'),installationId:stringValue('ksk-test-owner'),deviceModel:stringValue('Test device'),deviceManufacturer:stringValue('Test'),deviceName:stringValue('Owner phone'),platform:stringValue('android'),loginAt:{timestampValue:new Date().toISOString()},lastActiveAt:{timestampValue:new Date().toISOString()}});
+  await seed('projects/ksk/login_history/viewer-session',{userId:stringValue('viewer'),role:stringValue('viewer'),email:stringValue('viewer@example.test'),displayName:stringValue('Viewer'),installationId:stringValue('ksk-test-viewer'),deviceModel:stringValue('Test device'),deviceManufacturer:stringValue('Test'),deviceName:stringValue('Viewer phone'),platform:stringValue('android'),loginAt:{timestampValue:new Date().toISOString()},lastActiveAt:{timestampValue:new Date().toISOString()}});
   await seed('projects/ksk/approvals/approval1',{status:stringValue('pending')});
   await seed('projects/ksk/bills/payment1/images/receipt1',{recordId:stringValue('payment1'),imageBase64:stringValue('YWJj'),fileName:stringValue('receipt.jpg'),mimeType:stringValue('image/jpeg'),createdBy:stringValue('owner'),createdAt:{timestampValue:new Date().toISOString()}});
   await seed('projects/ksk/attachments/diary1/images/photo1',{recordId:stringValue('diary1'),imageBase64:stringValue('YWJj'),fileName:stringValue('site.jpg'),mimeType:stringValue('image/jpeg'),createdBy:stringValue('owner'),createdAt:{timestampValue:new Date().toISOString()}});
@@ -41,6 +43,9 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal((await request('projects/ksk/bills/payment1/images/receipt1','viewer')).status,200);
   assert.equal((await request('projects/ksk/attachments/diary1/images/photo1','viewer')).status,200);
   assert.equal((await request('projects/ksk/payments/payment1','viewer')).status,200);
+  assert.equal((await request('projects/ksk/login_history/viewer-session','viewer')).status,200);
+  assert.equal((await request('projects/ksk/login_history/owner-session','viewer')).status,403);
+  assert.equal((await request('projects/ksk/login_history/owner-session','owner')).status,200);
   for(const uid of ['owner','viewer']) {
     const listed=await fetch(`${root}/projects/ksk:runQuery`,{method:'POST',headers:{Authorization:`Bearer ${token(uid)}`,'Content-Type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'payments'}],limit:10}})});
     assert.equal(listed.status,200,await listed.text());

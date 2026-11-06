@@ -12,7 +12,20 @@
           "package_name": "com.ksk.houseconstruction"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "873877232505-eufp1vnuungi4bdpvhhi8o50tgrtahk3.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ksk.houseconstruction",
+            "certificate_hash": "fe0e3322434c216b0ce430bb6ab1c21cab28936a"
+          }
+        },
+        {
+          "client_id": "873877232505-itr42f7j3si3g113ps7m2tgd1dc22hcb.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyB_UKABLctgeR_iDnIOMalsKDTd1Ac3zdQ"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "873877232505-itr42f7j3si3g113ps7m2tgd1dc22hcb.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

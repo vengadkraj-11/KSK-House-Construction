@@ -1,4 +1,4 @@
-# KSK House Construction — Android app source
+# KSK House Construction — Android and private web app
 
 A mobile project manager for the KSK G+1 house build, based on the uploaded `KSK_House_Cost.xlsx` workbook.
 
@@ -15,7 +15,25 @@ A mobile project manager for the KSK G+1 house build, based on the uploaded `KSK
 
 ## Current connection status
 
-This package is the Android app **source project**, not a signed APK. It has not been connected to a Firebase project or deployed from this environment because project configuration and account UIDs were not supplied. Cloud sync becomes active after Firebase setup. The app displays bundled workbook data in local preview mode until then.
+This package is the Android and browser app source project, not a signed APK. It uses the existing `ksk-house-construction` Firebase project. Cloud sync is active when the `EXPO_PUBLIC_FIREBASE_*` settings are present; otherwise the app displays bundled workbook data in local preview mode.
+
+## Private browser access from Codespaces
+
+The browser app is intended to run only in an authenticated GitHub Codespace. It is not a public website and should not be deployed to Firebase Hosting. The existing `firebase.json` Hosting configuration points at `dist`; it is retained for the previously initialized setup only.
+
+1. Copy `.env.example` to `.env` if you have not already, and fill in the existing Firebase web app values for `ksk-house-construction`. These are Firebase client identifiers, not service-account credentials. Do not add private keys or passwords.
+2. Start Expo Web:
+
+   ```bash
+   npm run web
+   ```
+
+3. In the Codespaces **Ports** panel, find port **8081** and set **Port Visibility** to **Private**. Share the forwarded link only with authorized Codespaces users. Keep the port Private; do not change it to Public.
+4. Sign in with an existing owner or viewer account. Firestore roles and rules continue to control project access.
+
+If Firebase Authentication reports an unauthorized domain, add the exact forwarded Codespaces hostname (without the port number) under Authentication → Settings → Authorized domains in the existing Firebase project. Do not change the project or account roles.
+
+Browser exports download XLSX, JSON and image files directly. PDF actions open a print view; choose **Save to PDF** in the browser print dialog. Image attachments can be selected from the browser file picker; camera capture and device notifications/reminders remain Android-only. Browser sign-in persists in IndexedDB/local storage where available and falls back to an in-memory session when browser privacy settings block persistent storage.
 
 ## Free-plan architecture and limits
 

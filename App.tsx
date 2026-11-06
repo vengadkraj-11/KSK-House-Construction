@@ -1,11 +1,11 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import * as XLSX from 'xlsx';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-  ActivityIndicator, KeyboardAvoidingView, Modal, Platform, ScrollView,
+  ActivityIndicator, AppState, KeyboardAvoidingView, Modal, Platform, ScrollView,
   StatusBar, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
@@ -22,6 +22,7 @@ import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuo
 import {runProjectPermissionDiagnostics, setProjectMembershipDiagnostic} from './src/services/projectRecords';
 import {ActivityItem, Role, SheetDocument, SheetMap} from './src/types';
 import ProjectRecords from './src/components/ProjectRecords';
+import {createLoginHistorySession, loginHistoryDate, LoginHistoryEntry, subscribeLoginHistory} from './src/services/loginHistory';
 import {downloadBase64File, printHtmlInBrowser} from './src/services/webFiles';
 import {Alert} from './src/services/platformAlert';
 
@@ -887,6 +888,23 @@ function ActivityScreen({activities, language, canClear, onClear}: any) {
   );
 }
 
+function LoginHistoryCard({uid, role}: {uid: string; role: 'owner'|'viewer'}) {
+  const [entries, setEntries] = useState<LoginHistoryEntry[]>([]);
+  const [error, setError] = useState('');
+  useEffect(() => subscribeLoginHistory(uid, role, setEntries, setError), [uid, role]);
+  return <View style={cardStyle({marginBottom: 12})}>
+    <Text style={{fontSize:16,fontWeight:'800',color:C.ink}}>Login & device history</Text>
+    <Text style={{fontSize:11,color:C.muted,marginTop:5}}>{role==='owner'?'Recent sign-ins across project members.':'Recent sign-ins for this account.'} Device ID identifies this app installation, not a hardware serial number.</Text>
+    {error?<Text style={{fontSize:12,color:C.red,marginTop:9}}>{error}</Text>:entries.length===0?<Text style={{fontSize:12,color:C.muted,marginTop:9}}>No login history recorded yet. A new entry is created after the next verified sign-in.</Text>:entries.map(entry=><View key={entry.id} style={{borderTopWidth:1,borderTopColor:C.line,paddingTop:9,marginTop:9}}>
+      <Text style={{fontSize:13,fontWeight:'800',color:C.ink}}>{entry.displayName||entry.email||'Project member'} · {entry.role.toUpperCase()}</Text>
+      <Text style={{fontSize:11,color:C.muted,marginTop:3}}>{entry.email||'Email unavailable'} · {entry.deviceManufacturer} {entry.deviceModel}</Text>
+      <Text style={{fontSize:11,color:C.muted,marginTop:3}}>Login: {loginHistoryDate(entry.loginAt)}</Text>
+      <Text style={{fontSize:11,color:C.muted,marginTop:2}}>Last active: {loginHistoryDate(entry.lastActiveAt)}</Text>
+      <Text selectable style={{fontSize:10,color:C.muted,marginTop:2}}>App installation ID: {entry.installationId}</Text>
+    </View>)}
+  </View>;
+}
+
 function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed, onNotifications, onSignOut, onOriginal, language, onLanguageChange, onExportExcel, onExportPdf}: any) {
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
   const [diagnostics, setDiagnostics] = useState<any>(null);
@@ -907,6 +925,7 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
         </Picker>
       </View>
     </View>
+    {user?.uid ? <LoginHistoryCard uid={user.uid} role="viewer"/> : null}
     <TouchableOpacity onPress={onSignOut} style={{...buttonStyle(false, true), marginTop: 3}}>
       <Text style={{color: C.red, fontWeight: '800'}}>{t('Sign out', 'வெளியேறு')}</Text>
     </TouchableOpacity>
@@ -932,6 +951,8 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
         </Picker>
       </View>
     </View>
+
+    {user?.uid && (role === 'owner' || role === 'viewer') ? <LoginHistoryCard uid={user.uid} role={role}/> : null}
 
     {role === 'owner' || role === 'viewer' ? <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>Permission diagnostics</Text>
@@ -991,6 +1012,7 @@ function AppContent() {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role>(null);
   const [roleChecked, setRoleChecked] = useState(false);
+  const loginSessionRef = useRef<{uid:string; touch:()=>Promise<void>}|null>(null);
   const [membershipIssue, setMembershipIssue] = useState<'missing'|'wrong-project'|'invalid-role'|'unavailable'|null>(null);
   const [sheets, setSheets] = useState<SheetMap>(LOCAL_WORKBOOK);
   const [cloudSheetsLoaded, setCloudSheetsLoaded] = useState(false);
@@ -1058,6 +1080,26 @@ function AppContent() {
       if (__DEV__) console.info('[membership]', {operation: 'membership snapshot', path: 'users/{authenticatedUid}', status: !snapshot.exists() ? 'missing' : membership?.projectId !== 'ksk' ? 'wrong-project' : assigned === 'owner' || assigned === 'viewer' ? 'verified' : 'invalid-role', projectId: membership?.projectId || null, role: assigned === 'owner' || assigned === 'viewer' ? assigned : null});
     }, error => {setRole(null); setMembershipIssue('unavailable'); setProjectMembershipDiagnostic('unavailable', null); setRoleChecked(true); if (__DEV__) console.warn('[membership]', {operation: 'membership snapshot', path: 'users/{authenticatedUid}', code: error?.code || 'unknown', projectId: 'ksk', role: null});});
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !role || demoMode || !db) return;
+    let active = true;
+    loginSessionRef.current = null;
+    void createLoginHistorySession(user, role).then(session => {
+      if (!active) return;
+      loginSessionRef.current = {uid:user.uid, touch:session.touch};
+    }).catch(error => console.warn('[login-history] Could not record sign-in:', error?.code || error?.message || error));
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active' && loginSessionRef.current?.uid === user.uid) {
+        void loginSessionRef.current.touch().catch(error => console.warn('[login-history] Could not update last active:', error?.code || error?.message || error));
+      }
+    });
+    return () => {
+      active = false;
+      subscription.remove();
+      if (loginSessionRef.current?.uid === user.uid) loginSessionRef.current = null;
+    };
+  }, [user?.uid, role, demoMode]);
 
   useEffect(() => {
     if (!user || !db || !role) return;

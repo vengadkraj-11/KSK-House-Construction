@@ -19,6 +19,7 @@ function getDailyExpenseVoucherRows(sheet = {}) {
   }).filter(row => row.voucherNumber);
 }
 function value(row, index) { return index < 0 ? '' : String(row?.[index] ?? ''); }
+function normalizeVoucherNumber(value) { return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase(); }
 function dateValue(row, index) {
   const raw = row?.[index];
   if (typeof raw === 'number' && Number.isFinite(raw)) return new Date((raw - 25569) * 86400000).toISOString().slice(0, 10);
@@ -42,4 +43,4 @@ function validateAgreementLink(contractId, person, contracts = []) {
   const contract = contracts.find(item => item.id === contractId);
   return !!contract && contract.person === person;
 }
-module.exports = {getDailyExpenseVoucherRows, canCreateVoucherPayment, voucherRemainingAmount, validateAgreementLink};
+module.exports = {getDailyExpenseVoucherRows, canCreateVoucherPayment, voucherRemainingAmount, validateAgreementLink, normalizeVoucherNumber};

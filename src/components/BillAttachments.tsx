@@ -1,7 +1,7 @@
 import React, {useEffect, useState} from 'react';
 import {
-  ActivityIndicator, Alert, Image, Modal,
-  Text, TouchableOpacity, View
+  ActivityIndicator, Image, Modal,
+  Platform, Text, TouchableOpacity, View
 } from 'react-native';
 import {
   addDoc, collection, deleteDoc, doc, onSnapshot,
@@ -12,6 +12,8 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import {db} from '../firebase';
+import {downloadBase64File} from '../services/webFiles';
+import {Alert} from '../services/platformAlert';
 
 const PROJECT_ID = 'ksk';
 const MAX_BASE64_LENGTH = 450000;
@@ -82,7 +84,7 @@ export default function BillAttachments({
     try {
       let result: ImagePicker.ImagePickerResult;
 
-      if (camera) {
+      if (camera && Platform.OS !== 'web') {
         const permission = await ImagePicker.requestCameraPermissionsAsync();
         if (!permission.granted) {
           Alert.alert(
@@ -97,7 +99,7 @@ export default function BillAttachments({
           quality: 1
         });
       } else {
-        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        const permission = Platform.OS === 'web' ? {granted: true} : await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!permission.granted) {
           Alert.alert(
             t('Gallery permission', 'கேலரி அனுமதி'),
@@ -186,6 +188,11 @@ export default function BillAttachments({
   };
 
   const downloadImage = async (item: BillImage) => {
+    if (Platform.OS === 'web' && item.imageBase64) {
+      const safeName = (item.fileName || `receipt-${item.id}.jpg`).replace(/[^a-zA-Z0-9._-]/g, '_');
+      downloadBase64File(item.imageBase64, safeName, 'image/jpeg');
+      return;
+    }
     if (!item.imageBase64 || !FileSystem.cacheDirectory) {
       Alert.alert(
         t('Download unavailable', 'பதிவிறக்கம் கிடைக்கவில்லை'),

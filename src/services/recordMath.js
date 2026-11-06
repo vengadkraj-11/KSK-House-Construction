@@ -32,6 +32,7 @@ function summarizeInventory(records = []) {
   return [...items.values()].map(({latestMetadataTime, ...item}) => ({
     ...item,
     available: item.received + item.returnedToStock - item.returnedToSupplier - item.used - item.wastage,
+    stockValue: Math.max(0, item.received + item.returnedToStock - item.returnedToSupplier - item.used - item.wastage) * item.rate,
     lowStock: item.lowStockLevel > 0 && item.received + item.returnedToStock - item.returnedToSupplier - item.used - item.wastage <= item.lowStockLevel
   }));
 }

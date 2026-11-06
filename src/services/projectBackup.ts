@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import {db} from '../firebase';
 import {COLLECTIONS, MAX_BACKUP_BYTES, ProjectBackup, utf8ByteLength, validateProjectBackup} from './projectBackupValidation';
+import {downloadTextFile} from './webFiles';
 
 const PROJECT_ID='ksk';
 type BackupDoc={id:string;data:Record<string,any>};
@@ -56,6 +57,7 @@ export async function exportProjectBackup():Promise<string>{
   const backup:Backup={format:'ksk-project-backup',schemaVersion:1,projectId:PROJECT_ID,createdAt:new Date().toISOString(),sheets,collections,attachments};
   const json=JSON.stringify(encode(backup));
   if(utf8ByteLength(json)>MAX_BACKUP_BYTES)throw new Error('Backup exceeds the 50 MiB safe export limit. Export in a smaller set after reducing attached photos.');
+  if(downloadTextFile(json,'KSK_Project_Backup_'+new Date().toISOString().slice(0,10)+'.json','application/json'))return 'browser-download';
   const uri=`${FileSystem.cacheDirectory}KSK_Project_Backup_${new Date().toISOString().slice(0,10)}.json`;
   await FileSystem.writeAsStringAsync(uri,json,{encoding:FileSystem.EncodingType.UTF8});
   if(!(await Sharing.isAvailableAsync()))throw new Error('File sharing is unavailable on this device.');

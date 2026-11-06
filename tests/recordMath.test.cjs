@@ -175,3 +175,15 @@ test('filtered statement balances use the complete unique payment history per ag
   const totals=paymentStatementAgreements([all[0],all[3]],all,agreements);
   assert.deepEqual(totals.map(row=>[row.agreement.id,row.agreedAmount,row.totalPaid,row.remainingBalance]),[['a',1000,300,700],['b',500,150,350]]);
 });
+
+
+test('cumulative material register calculates available stock value using the latest dated rate',()=>{
+  const [cement]=summarizeInventory([
+    {material:'Cement',unit:'bags',direction:'received',quantity:100,unitRate:420,date:'2026-10-01',supplier:'Supplier A'},
+    {material:'Cement',unit:'bags',direction:'used',quantity:25,unitRate:430,date:'2026-10-10',supplier:'Supplier B'}
+  ]);
+  assert.equal(cement.available,75);
+  assert.equal(cement.rate,430);
+  assert.equal(cement.stockValue,32250);
+  assert.equal(cement.supplier,'Supplier B');
+});

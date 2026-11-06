@@ -3,7 +3,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-Notifications.setNotificationHandler({
+if (Platform.OS !== 'web') Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
     shouldShowList: true,
@@ -13,6 +13,7 @@ Notifications.setNotificationHandler({
 });
 
 export async function enableNotifications(_uid: string): Promise<string> {
+  if (Platform.OS === 'web') return 'Device notifications are available in the Android app only. Browser reminders remain saved in the project.';
   if (!Device.isDevice) {
     return 'Use a physical Android device to enable local notifications.';
   }
@@ -44,6 +45,7 @@ export async function showActivityNotification(
   title: string,
   body: string
 ): Promise<void> {
+  if (Platform.OS === 'web') return;
   // This free solution only alerts while the app is in the foreground.
   if (AppState.currentState !== 'active') return;
 
@@ -74,6 +76,7 @@ export function scheduleLocalReminder(title: string, body: string, dueDate: stri
 async function scheduleLocalReminderNow(title: string, body: string, dueDate: string, localKey: string, requestPermission: boolean): Promise<string> {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dueDate);
   if (!match) return 'Reminder saved, but its date is invalid for a local notification.';
+  if (Platform.OS === 'web') return 'Reminder saved to the project. Local notifications are available in the Android app only.';
   const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 9, 0, 0);
   if (date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1 || date.getDate() !== Number(match[3])) {
     return 'Reminder saved, but its date is invalid for a local notification.';
@@ -108,6 +111,7 @@ async function scheduleLocalReminderNow(title: string, body: string, dueDate: st
 }
 
 export function cancelLocalReminder(localKey: string): Promise<void> {
+  if (Platform.OS === 'web') return Promise.resolve();
   const previous=reminderWrites.get(localKey)||Promise.resolve();
   const task=previous.catch(()=>undefined).then(()=>cancelLocalReminderNow(localKey));
   reminderWrites.set(localKey,task);
@@ -130,6 +134,7 @@ async function cancelNotificationAndForget(identifier:string, storageKey:string)
 }
 
 export async function reconcileLocalReminders(uid:string,records:{id:string;title?:string;notes?:string;dueDate?:string;status?:string}[]):Promise<void>{
+  if (Platform.OS === 'web') return;
   const permission=await Notifications.getPermissionsAsync();
   const knownKeys=new Set<string>();
   for(const record of records){
