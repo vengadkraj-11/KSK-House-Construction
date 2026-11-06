@@ -33,6 +33,9 @@
         "projectId": "e2484e3d-843a-46a9-a6a7-ce1f36783d54"
       }
     },
-    "icon": "./assets/icon.png"
+    "icon": "./assets/icon.png",
+    "web": {
+      "bundler": "metro"
+    }
   }
 }

@@ -5,12 +5,12 @@ import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-  ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView,
+  ActivityIndicator, KeyboardAvoidingView, Modal, Platform, ScrollView,
   StatusBar, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import {SafeAreaView} from 'react-native-safe-area-context';
+import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {onAuthStateChanged, signInWithEmailAndPassword, signOut, User} from 'firebase/auth';
 import {collection, doc, getDoc, onSnapshot} from 'firebase/firestore';
 import BillAttachments from './src/components/BillAttachments';
@@ -22,6 +22,8 @@ import {saveSheet, seedWorkbook, subscribeActivities, subscribeSheets, ensureQuo
 import {runProjectPermissionDiagnostics, setProjectMembershipDiagnostic} from './src/services/projectRecords';
 import {ActivityItem, Role, SheetDocument, SheetMap} from './src/types';
 import ProjectRecords from './src/components/ProjectRecords';
+import {downloadBase64File, printHtmlInBrowser} from './src/services/webFiles';
+import {Alert} from './src/services/platformAlert';
 
 const C = {
   ink: '#17302D', muted: '#6F817C', green: '#1C6255', green2: '#E6F1EC',
@@ -446,7 +448,8 @@ function SheetView({sheetId, sheet, allSheets, role, onBack, onEdit, onAdd, onDe
                 </TouchableOpacity>
               ))}
             </View>
-            {filterDateTarget ? (
+            {filterDateTarget && Platform.OS === 'web' ? <input type="date" value={filters[filterDateTarget] || ''} onChange={event => {setFilters(previous => ({...previous, [filterDateTarget]: event.target.value})); setFilterDateTarget(null);}} style={{padding: 10, border: `1px solid ${C.line}`, borderRadius: 8}} /> : null}
+            {filterDateTarget && Platform.OS !== 'web' ? (
               <DateTimePicker
                 value={datePickerValue(filters[filterDateTarget])}
                 mode="date"
@@ -651,7 +654,8 @@ function RowEditor({visible, sheetId, sheet, allSheets, rowIndex, isNew, onClose
                             {values[i] || (language === 'ta' ? 'தேதியைத் தேர்ந்தெடுக்கவும்' : 'Select date')}
                           </Text>
                         </TouchableOpacity>
-                        {datePickerIndex === i ? (
+                        {datePickerIndex === i && Platform.OS === 'web' ? <input type="date" value={String(values[i] || '')} onChange={event => {const formatted=event.target.value;setValues(prev=>{const next=[...prev];next[i]=formatted;return next;});setDatePickerIndex(null);}} style={{padding: 10, border: `1px solid ${C.line}`, borderRadius: 8, width: '100%'}} /> : null}
+                        {datePickerIndex === i && Platform.OS !== 'web' ? (
                           <DateTimePicker
                             value={datePickerValue(values[i])}
                             mode="date"
@@ -892,6 +896,21 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
     try { setDiagnostics(await runProjectPermissionDiagnostics()); }
     finally { setDiagnosticsBusy(false); }
   };
+  if (role === 'viewer') return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 35}}>
+    <View style={cardStyle({marginBottom: 12})}>
+      <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>Language / மொழி</Text>
+      <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>{t('Choose your preferred app language.', 'உங்களுக்கு விருப்பமான செயலி மொழியைத் தேர்ந்தெடுக்கவும்.')}</Text>
+      <View style={{borderWidth: 1, borderColor: C.line, borderRadius: 10, marginTop: 10, overflow: 'hidden'}}>
+        <Picker selectedValue={language} onValueChange={(value: 'en' | 'ta') => onLanguageChange(value)} style={{color: C.ink}}>
+          <Picker.Item label="English" value="en" />
+          <Picker.Item label="தமிழ்" value="ta" />
+        </Picker>
+      </View>
+    </View>
+    <TouchableOpacity onPress={onSignOut} style={{...buttonStyle(false, true), marginTop: 3}}>
+      <Text style={{color: C.red, fontWeight: '800'}}>{t('Sign out', 'வெளியேறு')}</Text>
+    </TouchableOpacity>
+  </ScrollView>;
   return <ScrollView contentContainerStyle={{padding: 16, paddingBottom: 35}}>
     <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 18, fontWeight: '900', color: C.ink}}>{t('Account & access', 'கணக்கு மற்றும் அணுகல்')}</Text>
@@ -968,7 +987,7 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
   </ScrollView>;
 }
 
-export default function App() {
+function AppContent() {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role>(null);
   const [roleChecked, setRoleChecked] = useState(false);
@@ -1077,7 +1096,7 @@ export default function App() {
       items.forEach(item => seenActivityIds.add(item.id));
 
       // Only viewer devices receive local alerts for owner-created activity.
-      if (role === 'viewer') {
+      if (role === 'viewer' && Platform.OS !== 'web') {
         newItems.slice(0, 3).reverse().forEach(item => {
           void showActivityNotification(
             item.title || 'KSK House updated',
@@ -1106,6 +1125,7 @@ export default function App() {
   };
 
   const openSheet = (id: string) => {
+    if (role !== 'owner') return;
     setSelectedSheet(id);
     setScreen('Sheets');
   };
@@ -1245,6 +1265,8 @@ export default function App() {
         type: 'base64'
       });
 
+      if (downloadBase64File(base64, `KSK_House_Construction_${new Date().toISOString().slice(0, 10)}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) return;
+
       const fileUri =
         `${FileSystem.cacheDirectory}KSK_House_Construction_${new Date().toISOString().slice(0, 10)}.xlsx`;
 
@@ -1369,6 +1391,7 @@ export default function App() {
         </html>
       `;
 
+      if (printHtmlInBrowser(html)) return;
       const result = await Print.printToFileAsync({html});
 
       if (!(await Sharing.isAvailableAsync())) {
@@ -1486,7 +1509,12 @@ export default function App() {
     <View style={{flex:1}}>{renderScreen()}</View>
 
 <View style={{height:66, backgroundColor:C.white, borderTopColor:C.line, borderTopWidth:1, flexDirection:'row', alignItems:'center', paddingHorizontal:2}}>
-  {[
+  {(role === 'viewer' ? [
+    ['Dashboard','⌂','Dashboard',''],
+    ['Expenses','₹','Daily Expenses','daily_expenses'],
+    ['Records','▤','Payment Records',''],
+    ['Settings','☰','Settings','']
+  ] : [
     ['Dashboard','⌂','Dashboard',''],
     ['Sheets','⚙','Project Setup','project_setup'],
     ['Expenses','₹','Daily Expenses','daily_expenses'],
@@ -1494,7 +1522,7 @@ export default function App() {
     ['Records','▤','Project Records',''],
     ['Activity','◷','Activity',''],
     ['Settings','☰','Settings','']
-  ].map(([id,icon,label,sheetId]) => {
+  ]).map(([id,icon,label,sheetId]) => {
     const active = id === 'Sheets'
       ? screen === 'Sheets' && selectedSheet === sheetId
       : screen === id;
@@ -1546,4 +1574,8 @@ export default function App() {
 
     <RowEditor visible={modalVisible} sheetId={editingSheetId} sheet={sheets[editingSheetId]} allSheets={sheets} rowIndex={editingRow} isNew={editingIsNew} language={language} onClose={() => setModalVisible(false)} onSave={saveEditedSheet}/>
   </SafeAreaView>;
+}
+
+export default function App() {
+  return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
 }

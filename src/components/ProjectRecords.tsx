@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View} from 'react-native';
+import {ActivityIndicator, Platform, ScrollView, Text, TextInput, TouchableOpacity, View} from 'react-native';
 import {Picker} from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -13,6 +13,7 @@ import {summarizeContracts, summarizeInventory} from '../services/recordMath';
 import {getMaterialOptions} from '../services/materialOptions';
 import {paymentIdForDocument, summarizePaymentRecords, validatePaymentRecord} from '../services/paymentMath';
 import {canCreateVoucherPayment, getDailyExpenseVoucherRows, validateAgreementLink, voucherRemainingAmount} from '../services/projectRecordLinks';
+import {Alert} from '../services/platformAlert';
 
 type Field = {key: string; label: string; placeholder?: string; numeric?: boolean; options?: string[]};
 type Module = {type: ProjectRecordType; title: string; fields: Field[]};
@@ -21,7 +22,7 @@ const modules: Module[] = [
     {key:'voucherNumber',label:'Voucher / Bill number'}, {key:'paymentReference',label:'Payment reference number'}, {key:'category',label:'Payment category'}, {key:'status',label:'Payment status',options:['paid','pending','partially-paid','cancelled']},
     {key:'paymentTo',label:'Paid to / vendor'}, {key:'person',label:'Person / party'}, {key:'contractId',label:'Agreement',options:[]},
     {key:'paymentKind',label:'Classification',options:['advance','payment']},
-    {key:'amount',label:'Actual amount paid (₹)',numeric:true}, {key:'currency',label:'Currency',placeholder:'₹'}, {key:'date',label:'Payment date',placeholder:'YYYY-MM-DD'},
+    {key:'amount',label:'Amount Paid (₹)',numeric:true}, {key:'date',label:'Payment date',placeholder:'YYYY-MM-DD'},
     {key:'description',label:'Description / item'}, {key:'floor',label:'Floor / Area'}, {key:'stage',label:'Work Stage'},
     {key:'paidBy',label:'Paid by'}, {key:'method',label:'Payment mode'}, {key:'receivedBy',label:'Received by'}, {key:'enteredBy',label:'Entered by'}, {key:'reference',label:'Transaction / reference number'},
     {key:'billReceived',label:'Bill received?'}, {key:'receiptType',label:'Receipt type'}, {key:'receiptReference',label:'Receipt reference'}, {key:'notes',label:'Notes'}
@@ -56,7 +57,7 @@ const money = (amount: number) => `₹${amount.toLocaleString('en-IN', {maximumF
 
 export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsLoaded}: {uid: string; owner: boolean; sheets:any; sheetsReady:boolean; sheetsLoaded:boolean}) {
   const [active, setActive] = useState<ProjectRecordType>(owner ? 'payments' : 'payments');
-  const visibleModules = owner ? modules : modules.filter(module => ['payments','contracts','stock','progress','diary'].includes(module.type));
+  const visibleModules = owner ? modules : modules.filter(module => ['payments','contracts'].includes(module.type));
   const [records, setRecords] = useState<Record<string,ProjectRecord[]>>({});
   const [loaded, setLoaded] = useState<Record<string,boolean>>({});
   const [errors, setErrors] = useState<Record<string,string>>({});
@@ -132,7 +133,7 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
     try {
       const clean: Record<string,any> = {};
       current.fields.forEach(field => { const value=(values[field.key]||'').trim(); if(value&&field.key!=='voucherNumber') clean[field.key]=field.numeric?Number(value):value; });
-      if(current.type==='payments'){delete clean.allowPartial;clean.contractId=String(values.contractId||'');if(values.voucherNumber)clean.voucherNumber=values.voucherNumber;if(values.sourceExpenseId)clean.sourceExpenseId=values.sourceExpenseId;if(clean.paymentTo&&!clean.person)clean.person=clean.paymentTo;clean.currency=clean.currency||'₹';clean.status=clean.status||'paid';clean.enteredBy=clean.enteredBy||uid;clean.createdBy=uid;}
+      if(current.type==='payments'){delete clean.allowPartial;clean.contractId=String(values.contractId||'');if(values.voucherNumber)clean.voucherNumber=values.voucherNumber;if(values.sourceExpenseId)clean.sourceExpenseId=values.sourceExpenseId;if(clean.paymentTo&&!clean.person)clean.person=clean.paymentTo;clean.currency='₹';clean.status=clean.status||'paid';clean.enteredBy=clean.enteredBy||uid;clean.createdBy=uid;}
       if(current.type==='payments')validatePaymentRecord(clean);
       const createId=editingId?undefined:(pendingCreateId||newProjectRecordId(current.type));
       if(createId&&!pendingCreateId)setPendingCreateId(createId);
@@ -219,9 +220,16 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
     try {
       const picked=await DocumentPicker.getDocumentAsync({type:'application/json',copyToCacheDirectory:true});
       if(picked.canceled||!picked.assets?.[0])return;
-      const info=await FileSystem.getInfoAsync(picked.assets[0].uri);
-      if(info.exists&&info.size>50*1024*1024)throw new Error('Backup exceeds the 50 MiB safe import limit.');
-      const json=await FileSystem.readAsStringAsync(picked.assets[0].uri);
+      let json:string;
+      if(Platform.OS==='web'){
+        const file=picked.assets[0].file;
+        json=file?await file.text():await (await fetch(picked.assets[0].uri)).text();
+        if(new TextEncoder().encode(json).length>50*1024*1024)throw new Error('Backup exceeds the 50 MiB safe import limit.');
+      }else{
+        const info=await FileSystem.getInfoAsync(picked.assets[0].uri);
+        if(info.exists&&info.size>50*1024*1024)throw new Error('Backup exceeds the 50 MiB safe import limit.');
+        json=await FileSystem.readAsStringAsync(picked.assets[0].uri);
+      }
       Alert.alert('Import backup?', 'The file will be validated, missing documents added, and existing documents skipped. Cloud records are never replaced.', [
         {text:'Cancel',style:'cancel'},
         {text:'Import missing records',onPress:()=>{setToolBusy(true);void importProjectBackup(json,uid).then(result=>Alert.alert('Import complete',`${result.added} documents added; ${result.skipped} existing documents skipped.`)).catch(error=>Alert.alert('Import failed',error?.message||'Please retry.')).finally(()=>setToolBusy(false));}}
@@ -264,7 +272,7 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
       <View style={{backgroundColor:white,borderRadius:16,padding:16,borderWidth:1,borderColor:line,marginBottom:13}}>
         <Text style={{fontSize:18,fontWeight:'900',color:ink}}>{current.title}</Text>
         <Text style={{fontSize:12,color:muted,marginTop:5}}>{current.type==='payments'?'Read-only access to all project payment and receipt entries.':current.type==='stock'?'On hand = received + returned to stock − supplier returns − used − wastage. Purchases are order quantities, not stock.':'Records are read in bounded pages; totals include the full collection.'}</Text>
-        {owner?<TouchableOpacity onPress={()=>{setEditingId(undefined);setPendingCreateId(current.type==='payments'?newProjectRecordId('payments'):undefined);setPendingActivityId(undefined);setValues(current.type==='payments'?{paymentKind:'payment',currency:'₹'}:{});setModal(true);}} style={{marginTop:14,backgroundColor:green,padding:12,borderRadius:10,alignItems:'center'}}><Text style={{color:white,fontWeight:'900'}}>+ New Payment</Text></TouchableOpacity>:<Text style={{color:muted,fontSize:12,marginTop:12}}>View-only access</Text>}
+        {owner?<TouchableOpacity onPress={()=>{setEditingId(undefined);setPendingCreateId(current.type==='payments'?newProjectRecordId('payments'):undefined);setPendingActivityId(undefined);setValues(current.type==='payments'?{paymentKind:'payment'}:{});setModal(true);}} style={{marginTop:14,backgroundColor:green,padding:12,borderRadius:10,alignItems:'center'}}><Text style={{color:white,fontWeight:'900'}}>+ New Payment</Text></TouchableOpacity>:<Text style={{color:muted,fontSize:12,marginTop:12}}>View-only access</Text>}
         <Text style={{fontSize:11,color:muted,marginTop:8}}>Report sections: {reportStatus.map(section=>`${section.name}: ${section.state}${section.error?` (${section.error})`:''}`).join(' · ')}</Text>
         {reportStatus.some(section=>section.state==='failed')?<TouchableOpacity onPress={()=>setRetrySubscriptions(value=>value+1)} style={{alignSelf:'flex-start',paddingVertical:6}}><Text style={{fontSize:12,color:green,fontWeight:'800'}}>Retry failed record loads</Text></TouchableOpacity>:null}
         {reportsReady&&reportStatus.some(section=>section.state==='failed')?<Text style={{fontSize:11,color:'#9A6713',marginTop:4}}>Exports will be marked partial because an optional section failed to load.</Text>:null}
@@ -311,7 +319,7 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
           :field.key==='contractId'?<Picker selectedValue={values.contractId||''} onValueChange={value=>{const contract=contracts.find(row=>row.id===value);setValues(old=>({...old,contractId:String(value),person:contract?.person||old.person||''}));}}><Picker.Item label="No agreement (optional)" value=""/>{contracts.map(contract=><Picker.Item key={contract.id} label={`${contract.person} · ${money(Number(contract.agreedAmount)||0)} · ${contract.id.slice(0,7)}`} value={contract.id}/>)}</Picker>
           :current.type==='stock'&&field.key==='material'?<><Picker selectedValue={values.material&&materialOptions.includes(values.material)?values.material:''} onValueChange={value=>setValues(old=>({...old,material:String(value)}))}><Picker.Item label="Select catalogue material or enter below" value=""/>{materialOptions.map(material=><Picker.Item key={material} label={material} value={material}/>)}</Picker><TextInput value={values.material||''} onChangeText={value=>setValues(old=>({...old,material:value}))} placeholder="Custom material" style={{borderWidth:1,borderColor:line,borderRadius:9,padding:10,color:ink}}/></>
           :field.options?<Picker selectedValue={values[field.key]||field.options[0]} onValueChange={value=>setValues(old=>({...old,[field.key]:String(value)}))}>{field.options.map(option=><Picker.Item key={option} label={option.replaceAll('-',' ')} value={option}/>)}</Picker>
-          :field.key==='date'&&current.type==='payments'?<><TouchableOpacity onPress={()=>setShowPaymentDatePicker(true)} style={{borderWidth:1,borderColor:line,borderRadius:9,padding:12}}><Text style={{color:values.date?ink:muted}}>{values.date||'Select payment date'}</Text></TouchableOpacity>{showPaymentDatePicker?<DateTimePicker value={values.date?new Date(`${values.date}T12:00:00`):new Date()} mode="date" onChange={(_,date)=>{setShowPaymentDatePicker(false);if(date)setValues(old=>({...old,date:`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`}));}}/>:null}</>
+          :field.key==='date'&&current.type==='payments'?Platform.OS==='web'?<input type="date" value={values.date||''} onChange={event=>setValues(old=>({...old,date:event.target.value}))} style={{border:'1px solid #DCE4DF',borderRadius:9,padding:12}}/>:<><TouchableOpacity onPress={()=>setShowPaymentDatePicker(true)} style={{borderWidth:1,borderColor:line,borderRadius:9,padding:12}}><Text style={{color:values.date?ink:muted}}>{values.date||'Select payment date'}</Text></TouchableOpacity>{showPaymentDatePicker?<DateTimePicker value={values.date?new Date(`${values.date}T12:00:00`):new Date()} mode="date" onChange={(_,date)=>{setShowPaymentDatePicker(false);if(date)setValues(old=>({...old,date:`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`}));}}/>:null}</>
           :<TextInput value={values[field.key]||''} onChangeText={value=>setValues(old=>({...old,[field.key]:value}))} placeholder={field.placeholder||field.label} keyboardType={field.numeric?'decimal-pad':'default'} style={{borderWidth:1,borderColor:line,borderRadius:9,paddingHorizontal:12,paddingVertical:10,color:ink,fontSize:14}}/>}</View>)}</ScrollView>
       <TouchableOpacity disabled={saving} onPress={()=>void save()} style={{backgroundColor:green,padding:14,borderRadius:11,alignItems:'center',marginTop:10}}>{saving?<ActivityIndicator color={white}/>:<Text style={{color:white,fontWeight:'900'}}>{editingId?'Update record':'Save record'}</Text>}</TouchableOpacity>
     </View></View>:null}

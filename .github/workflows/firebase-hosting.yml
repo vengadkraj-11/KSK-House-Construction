@@ -1,0 +1,47 @@
+name: Deploy KSK team website
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_PUBLIC_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+      EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+      EXPO_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+      EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+      EXPO_PUBLIC_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - name: Install dependencies
+        run: yarn install --non-interactive
+      - name: Validate Firebase configuration
+        run: |
+          test -n "$EXPO_PUBLIC_FIREBASE_API_KEY" || { echo "::error::Missing FIREBASE_API_KEY"; exit 1; }
+          test -n "$EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN" || { echo "::error::Missing FIREBASE_AUTH_DOMAIN"; exit 1; }
+          test -n "$EXPO_PUBLIC_FIREBASE_PROJECT_ID" || { echo "::error::Missing FIREBASE_PROJECT_ID"; exit 1; }
+          test -n "$EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" || { echo "::error::Missing FIREBASE_MESSAGING_SENDER_ID"; exit 1; }
+          test -n "$EXPO_PUBLIC_FIREBASE_APP_ID" || { echo "::error::Missing FIREBASE_APP_ID"; exit 1; }
+          test "$EXPO_PUBLIC_FIREBASE_PROJECT_ID" = "ksk-house-construction" || { echo "::error::Wrong Firebase project"; exit 1; }
+      - name: Type check
+        run: yarn typecheck
+      - name: Run tests
+        run: yarn test
+      - name: Export website
+        run: npx expo export --platform web
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KSK_HOUSE_CONSTRUCTION }}
+          projectId: ksk-house-construction
+          channelId: live
