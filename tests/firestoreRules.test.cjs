@@ -54,7 +54,7 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   for (const path of ['projects/ksk/stock/stock1','projects/ksk/progress/progress1','projects/ksk/diary/diary1']) assert.equal((await request(path,'viewer')).status,200);
   assert.equal((await request('projects/ksk/approvals/approval1','viewer')).status,403);
   assert.equal((await request('projects/ksk/reminders/reminder1','viewer')).status,403);
-  for (const path of ['projects/ksk/contracts/contract1','projects/ksk/stock/stock1','projects/ksk/progress/progress1','projects/ksk/diary/diary1','projects/ksk/reminders/reminder1']) {
+  for (const path of ['projects/ksk/contracts/contract1','projects/ksk/stock/stock1','projects/ksk/progress/progress1','projects/ksk/diary/diary1','projects/ksk/approvals/approval1','projects/ksk/reminders/reminder1']) {
     assert.equal((await request(path,'viewer','DELETE')).status,403,`Viewers must not delete ${path}.`);
   }
   assert.equal((await request('projects/ksk/sheets/sheet1','unknown')).status,403);

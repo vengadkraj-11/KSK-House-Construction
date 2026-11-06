@@ -56,12 +56,11 @@ function paymentStatementLedger(payment, allPayments = [payment], contracts = []
 
   const agreement = agreementForPayment(payment, contracts);
   if (payment.contractId && !agreement) throw new Error(`The saved agreement “${payment.contractId}” could not be found. Re-select a valid agreement before exporting this payment PDF.`);
-  const party = normalizedPaymentParty(payment.paymentTo || payment.person);
   const accountPayments = payment.contractId
     ? allPayments.filter(row => row && (String(row.contractId || '') === String(payment.contractId) || (!row.contractId && agreementForPayment(row, contracts)?.id === agreement.id)))
     : agreement
-      ? allPayments.filter(row => !row.contractId && normalizedPaymentParty(row.paymentTo || row.person) === party)
-      : allPayments.filter(row => !row.contractId && normalizedPaymentParty(row.paymentTo || row.person) === party);
+      ? allPayments.filter(row => row && (String(row.contractId || '') === String(agreement.id) || (!row.contractId && agreementForPayment(row, contracts)?.id === agreement.id)))
+      : [payment];
   if (!accountPayments.some(row => row && (row.id && payment.id ? row.id === payment.id : row.paymentId && payment.paymentId ? row.paymentId === payment.paymentId : row === payment))) accountPayments.push(payment);
   const history = uniquePayments(accountPayments).sort((a, b) =>
     String(a.date || '').localeCompare(String(b.date || '')) ||

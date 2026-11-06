@@ -162,7 +162,7 @@ function pdfStyles(){return `<style>@page{size:A4;margin:16mm}body{font:10pt Ari
 export async function exportPaymentReceiptPdf(payment:ProjectRecord,sheets:any={},allPayments:ProjectRecord[]= [payment],contracts:ProjectRecord[]=[]):Promise<void>{
   const setup=sheets?.project_setup?.values||[];
   const setting=(pattern:RegExp)=>String(setup.slice(1).find((row:any[])=>pattern.test(String(row?.[0]||'')))?.[1]||'').trim();
-  const projectName='KSK CONSTRUCTION';
+  const projectName='KSK Construction';
   const location=setting(/location|site address/i);
   const currency=String(payment.currency||'₹');
   const id=String(payment.paymentId||payment.id||'');
@@ -179,7 +179,7 @@ export async function exportPaymentReceiptPdf(payment:ProjectRecord,sheets:any={
       :error?.message||'Receipt images could not be loaded.';
   }
 
-  const detailRows=[['Payment to',recipient],['Paid by',blank(payment.paidBy)],['Mode',blank(payment.method)]];
+  const detailRows=[['Payment to',recipient],['Paid by',blank(payment.paidBy)],['Payment mode',blank(payment.method)]];
   const agreement=contracts.find(row=>String(row.id||'')===String(payment.contractId||''));
   const agreementDate=blank(agreement?.startDate)||'—';
   const transactionRows=[...(agreed===null?[]:[`<tr class="agreement-row"><td>${htmlEscape(agreementDate)}</td><td>Agreed amount</td><td class="money">${paymentMoney(agreed,currency)}</td></tr>`]),...ordered.map(row=>`<tr><td>${htmlEscape(blank(row.date))}</td><td>${htmlEscape(`${String(row.paymentKind||'payment').toLowerCase()==='advance'?'Advance':'Payment'}${row.description?` · ${row.description}`:''}`)}</td><td class="money">−${paymentMoney(row.amount,String(row.currency||currency))}</td></tr>`)].join('');
@@ -234,7 +234,7 @@ td:first-child{width:35%;color:#65736b}
 </table>
 <div class="section-title">AGREEMENT &amp; PAYMENT LEDGER</div>
 <table class="history"><thead><tr><th>Date</th><th>Description</th><th class="money">Amount</th></tr></thead><tbody>${transactionRows||'<tr><td colspan="3">No saved payments</td></tr>'}</tbody></table>
-<div class="amount-box"><div class="amount-label">REMAINING AMOUNT</div><div class="amount-value">${remaining===null?'Not provided':paymentMoney(remaining,currency)}</div>${balance!==null&&balance<0?`<div class="muted">Overpaid: ${paymentMoney(Math.abs(balance),currency)}</div>`:''}</div>
+<div class="amount-box"><div class="amount-label">TOTAL PAID TO DATE</div><div class="amount-value">${paymentMoney(totalPaid,currency)}</div><div class="amount-label" style="margin-top:12px">REMAINING AMOUNT</div><div class="amount-value">${remaining===null?'Not provided':paymentMoney(remaining,currency)}</div>${balance!==null&&balance<0?`<div class="muted">Overpaid: ${paymentMoney(Math.abs(balance),currency)}</div>`:''}</div>
 <div class="footer">${htmlEscape(projectName)} · Payment receipt</div>
 
 ${evidence}

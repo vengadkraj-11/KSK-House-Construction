@@ -166,7 +166,25 @@ test('legacy payments use a normalized payee only when it identifies one agreeme
   const exactLinked=paymentStatementLedger({id:'linked',contractId:'a',person:'Vendor One',amount:10},[{id:'linked',contractId:'a',person:'Vendor One',amount:10},{id:'old',person:'vendor one',amount:30},{id:'other',contractId:'b',person:'Vendor Two',amount:900}],agreements);
   assert.equal(exactLinked.totalPaid,40);
   assert.deepEqual(exactLinked.history.map(row=>row.id),['linked','old']);
-  assert.equal(paymentStatementLedger({id:'ambiguous',person:'Same',amount:1},[],[{id:'a',person:'Same',agreedAmount:5},{id:'b',person:'Same',agreedAmount:8}]).agreedAmount,null);
+  const ambiguous=paymentStatementLedger({id:'ambiguous',person:'Same',amount:1},[{id:'ambiguous',person:'Same',amount:1},{id:'other',person:'Same',amount:80}],[{id:'a',person:'Same',agreedAmount:5},{id:'b',person:'Same',agreedAmount:8}]);
+  assert.equal(ambiguous.agreedAmount,null);
+  assert.equal(ambiguous.totalPaid,1);
+  assert.deepEqual(ambiguous.history.map(row=>row.id),['ambiguous']);
+});
+
+test('legacy receipt history includes linked payments only for its unique agreement',()=>{
+  const agreements=[{id:'a',person:'Vendor',agreedAmount:500},{id:'b',person:'Another vendor',agreedAmount:200}];
+  const legacy={id:'legacy',person:'Vendor',amount:40,date:'2026-01-03'};
+  const statement=paymentStatementLedger(legacy,[
+    legacy,
+    {id:'linked',contractId:'a',person:'Vendor',amount:60,date:'2026-01-02'},
+    {id:'other-agreement',contractId:'b',person:'Another vendor',amount:700,date:'2026-01-01'},
+    {id:'legacy-duplicate',paymentTo:' Vendor ',amount:40,date:'2026-01-03'}
+  ],agreements);
+  assert.deepEqual(statement.history.map(row=>row.id),['linked','legacy','legacy-duplicate']);
+  assert.equal(statement.totalPaid,140);
+  assert.equal(statement.agreedAmount,500);
+  assert.equal(statement.remainingBalance,360);
 });
 
 test('filtered statement balances use the complete unique payment history per agreement',()=>{

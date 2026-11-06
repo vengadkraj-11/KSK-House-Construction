@@ -209,8 +209,13 @@ export default function ProjectRecords({uid, owner, sheets, sheetsReady, sheetsL
           await deleteProjectRecord(record,uid);
           setRecords(old=>({...old,[record.type]:(old[record.type]||[]).filter(item=>item.id!==record.id)}));
           if(record.type==='reminders'){
-            try{await cancelLocalReminder(`reminder:${uid}:${record.id}`);}
-            catch(error:any){console.warn('Reminder deleted, but its local notification could not be cancelled',error);}
+            try{
+              await cancelLocalReminder(`reminder:${uid}:${record.id}`);
+            }catch(error:any){
+              console.warn('Reminder deleted, but its local notification could not be cancelled',error);
+              Alert.alert('Reminder deleted, notification still scheduled','The reminder record was deleted, but this device could not cancel its local notification. It may still appear once.');
+              return;
+            }
           }
           Alert.alert('Record deleted',`${label} was deleted.`);
         }catch(error:any){Alert.alert('Could not delete record',error?.message||'Check your connection and try again.');}

@@ -241,6 +241,12 @@ export async function addProjectRecord(type: ProjectRecordType, values: Record<s
   if (type === 'stock') {
     if (!['purchase', 'received', 'returned-to-stock', 'returned-to-supplier', 'used', 'wastage'].includes(String(clean.direction).toLowerCase())) throw new Error('Choose a supported material movement.');
     if (!clean.material || !clean.unit) throw new Error('Material and unit are required.');
+    if (existingId) {
+      const linkedStock = await getDoc(doc(db, 'projects', PROJECT_ID, 'stock', existingId));
+      if (linkedStock.exists() && linkedStock.data().sourceType === 'daily_expense') {
+        throw new Error('This stock receipt is linked to a Daily Expenses entry. Edit the original expense instead.');
+      }
+    }
   }
 
   const batch = writeBatch(db);
@@ -315,6 +321,9 @@ export async function deleteProjectRecord(record: ProjectRecord, uid: string): P
   }
   const current = await getDoc(ref);
   if (!current.exists()) throw new Error('This record was already deleted or no longer exists.');
+  if (record.type === 'stock' && current.data().sourceType === 'daily_expense') {
+    throw new Error('This stock receipt is linked to a Daily Expenses entry. Delete the original expense instead.');
+  }
   const activities = await getDocs(query(collection(db, 'projects', PROJECT_ID, 'activity'), where('sheetId', '==', `module_${record.type}`)));
   const relatedActivities = activities.docs.filter(item => item.data().recordId === record.id || item.data().itemName === record.id);
   const relatedPhotos: any[] = [];
