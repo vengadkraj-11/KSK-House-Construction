@@ -27,13 +27,15 @@ function createViewerAccess() {
       const transaction = {
         get: async ref => snapshot(ref),
         set: (ref, data) => writes.push({type: 'set', ref, data}),
-        update: (ref, data) => writes.push({type: 'update', ref, data})
+        update: (ref, data) => writes.push({type: 'update', ref, data}),
+        delete: ref => writes.push({type: 'delete', ref})
       };
       try {
         const result = await callback(transaction);
         for (const write of writes) {
           if (write.type === 'update' && !documents.has(write.ref.path)) throw new Error('Missing document');
-          documents.set(write.ref.path, {
+          if (write.type === 'delete') documents.delete(write.ref.path);
+          else documents.set(write.ref.path, {
             ...(documents.get(write.ref.path) || {}),
             ...write.data
           });
@@ -181,4 +183,63 @@ test('a new session can only request owner-verified recovery and never gains acc
   assert.equal(repeatedRecovery.created, false);
   assert.equal(repeatedRecovery.status, 'pending');
   assert.equal([...documents.keys()].filter(key => key.startsWith('viewerRecoveryRequests/')).length, 1);
+});
+
+test('clearing request history removes pending and rejected history without changing approved member access', async () => {
+  const {clearViewerRequestHistory, canContinueWithApprovedSession, documents} = createViewerAccess();
+  const addAccess = (uid, phone, status) => {
+    documents.set(`viewerAccess/${uid}`, {
+      uid,
+      fullName: uid,
+      normalizedMobileNumber: phone,
+      status,
+      preferredLanguage: 'en'
+    });
+    documents.set(`viewerPhoneIndex/${phone}`, {uid, status});
+    documents.set(`viewerPhoneStatus/${phone}`, {status});
+    return documents.get(`viewerAccess/${uid}`);
+  };
+  const pending = addAccess('pending-member', '+919876543210', 'pending');
+  const rejected = addAccess('rejected-member', '+919876543211', 'rejected');
+  const approved = addAccess('approved-member', '+919876543212', 'approved');
+  const revoked = addAccess('revoked-member', '+919876543213', 'revoked');
+  approved.approvalDate = 'approval-time';
+  documents.set('viewerRecoveryRequests/recovery-pending', {
+    uid: 'recovery-pending',
+    normalizedMobileNumber: '+919876543212',
+    status: 'pending'
+  });
+  documents.set('viewerRecoveryRequests/recovery-restored', {
+    uid: 'recovery-restored',
+    normalizedMobileNumber: '+919876543212',
+    status: 'restored'
+  });
+
+  const cleared = await clearViewerRequestHistory([
+    {kind: 'access', request: pending},
+    {kind: 'access', request: rejected},
+    {kind: 'access', request: approved},
+    {kind: 'access', request: revoked},
+    {kind: 'recovery', request: {uid: 'recovery-pending', status: 'pending'}},
+    {kind: 'recovery', request: {uid: 'recovery-restored', status: 'restored'}}
+  ]);
+
+  assert.equal(cleared, 4);
+  for (const [uid, phone] of [
+    ['pending-member', '+919876543210'],
+    ['rejected-member', '+919876543211']
+  ]) {
+    assert.equal(documents.has(`viewerAccess/${uid}`), false);
+    assert.equal(documents.has(`viewerPhoneIndex/${phone}`), false);
+    assert.equal(documents.has(`viewerPhoneStatus/${phone}`), false);
+  }
+  assert.equal(documents.has('viewerRecoveryRequests/recovery-pending'), false);
+  assert.equal(documents.has('viewerRecoveryRequests/recovery-restored'), false);
+  assert.equal(documents.get('viewerAccess/approved-member').status, 'approved');
+  assert.equal(documents.get('viewerAccess/approved-member').approvalDate, 'approval-time');
+  assert.equal(documents.get('viewerPhoneIndex/+919876543212').status, 'approved');
+  assert.equal(documents.get('viewerPhoneStatus/+919876543212').status, 'approved');
+  assert.equal(canContinueWithApprovedSession('approved-member', documents.get('viewerAccess/approved-member'), '+919876543212'), true);
+  assert.equal(documents.get('viewerAccess/revoked-member').status, 'revoked');
+  assert.equal(documents.get('viewerPhoneIndex/+919876543213').status, 'revoked');
 });

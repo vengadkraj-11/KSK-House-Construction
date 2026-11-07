@@ -203,6 +203,18 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const duplicateRequest=await createViewer('duplicate-viewer',phone,'en');
   assert.equal(duplicateRequest.status,403,'A second UID cannot create another request for an already indexed mobile number.');
   assert.equal((await request('viewerAccess/duplicate-viewer','duplicate-viewer','GET',undefined,undefined,'password')).status,404,'The rejected duplicate write creates no registration.');
+  const clearPendingPhone='+15550004320';
+  assert.equal((await createViewer('clear-pending-viewer',clearPendingPhone)).status,200,'A pending registration can be created for history-clear validation.');
+  assert.equal((await request('viewerAccess/clear-pending-viewer','clear-pending-viewer','DELETE',undefined,undefined,'password')).status,403,'A registrant cannot delete their own request history.');
+  const clearPending=await commit('owner',[
+    {delete:`projects/${project}/databases/(default)/documents/viewerAccess/clear-pending-viewer`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${clearPendingPhone}`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${clearPendingPhone}`}
+  ]);
+  assert.equal(clearPending.status,200,await clearPending.text(),'The owner can clear a pending request and its non-approved phone indexes.');
+  for(const path of ['viewerAccess/clear-pending-viewer',`viewerPhoneIndex/${clearPendingPhone}`,`viewerPhoneStatus/${clearPendingPhone}`]){
+    assert.equal((await request(path,'owner')).status,404,`${path} stays cleared after reloading.`);
+  }
   const simultaneousPhone='+15550004321';
   const simultaneousRegistrations=await Promise.all([
     createViewer('simultaneous-rule-a',simultaneousPhone),
@@ -224,6 +236,13 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const approvedRequest=await request('viewerAccess/password-viewer','password-viewer','GET',undefined,undefined,'password');
   const approvalSeconds=Math.floor(Date.parse((await approvedRequest.json()).fields.approvalDate.timestampValue)/1000);
   assert.ok(approvalSeconds>0,'Owner approval is recorded against the authenticated viewer UID.');
+  const approvedHistoryDelete=await commit('owner',[
+    {delete:`projects/${project}/databases/(default)/documents/viewerAccess/password-viewer`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${phone}`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${phone}`}
+  ]);
+  assert.equal(approvedHistoryDelete.status,403,'The owner cannot clear an approved member record or its approval indexes.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','password-viewer','GET',undefined,undefined,'password')).status,200,'A rejected history deletion leaves approved member access active.');
   const persistentAuthTime=0;
   await seed('projects/ksk/contracts/contract1',{person:stringValue('Approved viewer test'),agreedAmount:numberValue(100)});
   await seed('projects/ksk/stock/stock1',{material:stringValue('Approved viewer test'),quantity:numberValue(1)});
@@ -311,6 +330,10 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal(transfer.status,200,await transfer.text(),'Only the owner can atomically transfer the existing approval.');
   assert.equal((await request('projects/ksk/sheets/daily_expenses','recovery-new','GET',undefined,undefined,'password')).status,200,'The verified replacement session receives the existing approved access.');
   assert.equal((await request('projects/ksk/sheets/daily_expenses','recovery-old','GET',undefined,undefined,'anonymous')).status,403,'The previous session loses access in the same transfer.');
+  assert.equal((await request('viewerRecoveryRequests/recovery-new','recovery-new','DELETE',undefined,undefined,'password')).status,403,'A family member cannot delete recovery history.');
+  assert.equal((await request('viewerRecoveryRequests/recovery-new','owner','DELETE')).status,200,'The owner can clear processed recovery history.');
+  assert.equal((await request('viewerRecoveryRequests/recovery-new','owner')).status,404,'Processed recovery history stays cleared after reload.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','recovery-new','GET',undefined,undefined,'password')).status,200,'Clearing recovery history does not remove the replacement member access.');
 
   const revoked=await decideViewer('password-viewer',phone,'revoked');
   assert.equal(revoked.status,200,await revoked.text());
@@ -323,6 +346,14 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const rejected=await decideViewer('rejected-viewer',rejectedPhone,'rejected');
   assert.equal(rejected.status,200,await rejected.text());
   assert.equal((await request('projects/ksk/sheets/sheet1','rejected-viewer')).status,403,'Rejected registrations cannot read project data.');
+  assert.equal((await request('viewerAccess/rejected-viewer','rejected-viewer','DELETE',undefined,undefined,'password')).status,403,'Rejected registrants cannot delete their history.');
+  const clearRejected=await commit('owner',[
+    {delete:`projects/${project}/databases/(default)/documents/viewerAccess/rejected-viewer`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${rejectedPhone}`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${rejectedPhone}`}
+  ]);
+  assert.equal(clearRejected.status,200,await clearRejected.text(),'The owner can clear rejected request history.');
+  assert.equal((await request('viewerAccess/rejected-viewer','owner')).status,404,'Rejected request history does not reappear after reload.');
 
   const anonymousPhone='+15550001234';
   const anonymousRequest=await createViewer('anonymous-viewer',anonymousPhone,'ta','anonymous');

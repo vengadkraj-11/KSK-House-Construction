@@ -36,6 +36,9 @@ export type ViewerRecoveryRequest = {
   decidedBy?: string;
   decisionAt?: any;
 };
+export type ViewerRequestHistoryItem =
+  | {kind: 'access'; request: ViewerAccessRequest}
+  | {kind: 'recovery'; request: ViewerRecoveryRequest};
 
 const accessPath = (uid: string) => doc(db!, 'viewerAccess', uid);
 const phonePath = (phone: string) => doc(db!, 'viewerPhoneIndex', phone);
@@ -323,6 +326,69 @@ export function subscribeViewerRecoveryRequests(
     requests.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
     onChange(requests);
   }, onError);
+}
+
+export async function clearViewerRequestHistory(items: ViewerRequestHistoryItem[]): Promise<number> {
+  if (!db) throw new Error('Firebase is not configured.');
+
+  let clearedCount = 0;
+  for (let offset = 0; offset < items.length; offset += 100) {
+    const chunk = items.slice(offset, offset + 100);
+    clearedCount += await runTransaction(db, async transaction => {
+      const entries = chunk.map(item => {
+        const requestRef = item.kind === 'access' ? accessPath(item.request.uid) : recoveryPath(item.request.uid);
+        const indexRef = item.kind === 'access' && item.request.normalizedMobileNumber
+          ? phonePath(normalizePhoneNumber(item.request.normalizedMobileNumber))
+          : null;
+        const statusRef = item.kind === 'access' && item.request.normalizedMobileNumber
+          ? phoneStatusPath(normalizePhoneNumber(item.request.normalizedMobileNumber))
+          : null;
+        return {item, requestRef, indexRef, statusRef};
+      });
+      const snapshots = await Promise.all(entries.flatMap(({requestRef, indexRef, statusRef}) =>
+        [requestRef, indexRef, statusRef].filter((reference): reference is NonNullable<typeof reference> => reference !== null)
+          .map(reference => transaction.get(reference))
+      ));
+
+      let snapshotIndex = 0;
+      let chunkClearedCount = 0;
+      for (const {item, requestRef, indexRef, statusRef} of entries) {
+        const requestSnapshot = snapshots[snapshotIndex++];
+        const indexSnapshot = indexRef ? snapshots[snapshotIndex++] : null;
+        const statusSnapshot = statusRef ? snapshots[snapshotIndex++] : null;
+        if (!requestSnapshot.exists()) continue;
+
+        const currentRequest = requestSnapshot.data() as ViewerAccessRequest | ViewerRecoveryRequest;
+        if (item.kind === 'recovery') {
+          if (!['pending', 'rejected', 'restored'].includes(currentRequest.status)) continue;
+          transaction.delete(requestRef);
+          chunkClearedCount += 1;
+          continue;
+        }
+
+        const accessRequest = currentRequest as ViewerAccessRequest;
+        if (accessRequest.legacy || !['pending', 'rejected'].includes(accessRequest.status)) continue;
+        transaction.delete(requestRef);
+        if (indexSnapshot?.exists()) {
+          const index = indexSnapshot.data() as ViewerPhoneIndex;
+          if (index.uid === accessRequest.uid && ['pending', 'rejected'].includes(index.status)) {
+            transaction.delete(indexRef!);
+          }
+        }
+        if (statusSnapshot?.exists()) {
+          const status = statusSnapshot.data() as {status: ViewerAccessStatus};
+          const indexBelongsToRequest = !indexSnapshot?.exists()
+            || (indexSnapshot.data() as ViewerPhoneIndex).uid === accessRequest.uid;
+          if (indexBelongsToRequest && ['pending', 'rejected'].includes(status.status)) {
+            transaction.delete(statusRef!);
+          }
+        }
+        chunkClearedCount += 1;
+      }
+      return chunkClearedCount;
+    });
+  }
+  return clearedCount;
 }
 
 export function subscribeLegacyViewers(

@@ -36,6 +36,8 @@ jobs:
         run: yarn typecheck
       - name: Run tests
         run: yarn test
+      - name: Run Firestore rules tests
+        run: npx --yes firebase-tools emulators:exec --only firestore,auth --project demo-ksk "node --test tests/firestoreRules.test.cjs tests/authFlow.test.cjs"
       - name: Export website
         run: npx expo export --platform web
       - name: Deploy to Firebase Hosting

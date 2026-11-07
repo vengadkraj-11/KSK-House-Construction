@@ -423,7 +423,8 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['preferredLanguage', 'updatedAt']))
         || validViewerDecision(uid)
         || validRecoveryTransferRevoke(uid);
-      allow delete: if false;
+      allow delete: if isOwner('ksk')
+        && resource.data.get('status', null) in ['pending', 'rejected'];
     }
 
     match /viewerPhoneIndex/{phone} {
@@ -431,7 +432,8 @@ service cloud.firestore {
       allow list: if isOwner('ksk');
       allow create: if validViewerPhoneIndexCreate(phone);
       allow update: if validViewerPhoneIndexUpdate(phone);
-      allow delete: if false;
+      allow delete: if isOwner('ksk')
+        && resource.data.get('status', null) in ['pending', 'rejected'];
     }
 
     match /viewerPhoneStatus/{phone} {
@@ -439,7 +441,8 @@ service cloud.firestore {
       allow list: if false;
       allow create: if validViewerPhoneStatusCreate(phone);
       allow update: if validViewerPhoneStatusUpdate(phone);
-      allow delete: if false;
+      allow delete: if isOwner('ksk')
+        && resource.data.get('status', null) in ['pending', 'rejected'];
     }
 
     match /viewerRecoveryRequests/{uid} {
@@ -447,7 +450,8 @@ service cloud.firestore {
       allow list: if isOwner('ksk');
       allow create: if validViewerRecoveryCreate(uid);
       allow update: if validViewerRecoveryDecision(uid);
-      allow delete: if false;
+      allow delete: if isOwner('ksk')
+        && resource.data.get('status', null) in ['pending', 'rejected', 'restored'];
     }
 
     match /projects/{projectId}/sheets/{sheetId} {
