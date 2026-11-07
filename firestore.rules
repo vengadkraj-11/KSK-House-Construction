@@ -109,6 +109,40 @@ service cloud.firestore {
         && existsAfter(viewerPhoneStatusPath(phone))
         && getAfter(viewerPhoneStatusPath(phone)).data.get('status', null) == 'pending';
     }
+    function validManualViewerCreate(uid) {
+      let data = request.resource.data;
+      let phone = data.get('normalizedMobileNumber', '');
+      let indexPath = viewerPhoneIndexPath(phone);
+      return isOwner('ksk')
+        && uid != request.auth.uid
+        && data.keys().hasAll([
+          'uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage',
+          'manualInvite', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage',
+          'manualInvite', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'
+        ])
+        && data.get('uid', null) == uid
+        && data.get('fullName', null) is string
+        && data.get('fullName', null).size() >= 2
+        && data.get('fullName', null).size() <= 120
+        && phone.matches('^\\+[1-9][0-9]{7,14}$')
+        && data.get('status', null) == 'approved'
+        && data.get('preferredLanguage', null) in ['en', 'ta']
+        && data.get('manualInvite', null) == true
+        && data.get('registeredAt', null) == request.time
+        && data.get('createdAt', null) == request.time
+        && data.get('approvalDate', null) == request.time
+        && data.get('approverUid', null) == request.auth.uid
+        && !exists(viewerAccessPath(uid))
+        && !exists(indexPath)
+        && existsAfter(indexPath)
+        && getAfter(indexPath).data.get('uid', null) == uid
+        && getAfter(indexPath).data.get('status', null) == 'approved'
+        && existsAfter(viewerPhoneStatusPath(phone))
+        && getAfter(viewerPhoneStatusPath(phone)).data.get('status', null) == 'approved';
+    }
     function validViewerHistoryCreate(uid) {
       let data = request.resource.data;
       let phone = data.get('normalizedMobileNumber', '');
@@ -486,7 +520,10 @@ service cloud.firestore {
     match /viewerAccess/{uid} {
       allow get: if signedIn() && (request.auth.uid == uid || isOwner('ksk'));
       allow list: if isOwner('ksk');
-      allow create: if validViewerRequestCreate(uid) || validLegacyRevocation(uid) || validRecoveryViewerCreate(uid);
+      allow create: if validViewerRequestCreate(uid)
+        || validManualViewerCreate(uid)
+        || validLegacyRevocation(uid)
+        || validRecoveryViewerCreate(uid);
       allow update: if (signedIn()
           && request.auth.uid == uid
           && resource.data.get('uid', null) == uid

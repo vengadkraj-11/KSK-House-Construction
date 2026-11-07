@@ -1,4 +1,5 @@
 name: Deploy KSK team website
+run-name: Deploy ${{ github.ref_name }} at ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -17,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -52,7 +55,27 @@ jobs:
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$credential_file"
           GOOGLE_APPLICATION_CREDENTIALS="$credential_file" npx --yes firebase-tools deploy --only firestore:rules --project ksk-house-construction
       - name: Export website
-        run: npx expo export --platform web
+        run: npm run build:web
+      - name: Verify exported family portal and hosting target
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const config = JSON.parse(fs.readFileSync('firebase.json', 'utf8'));
+          if (config.hosting?.site !== 'ksk-house-construction' || config.hosting?.public !== 'dist') {
+            throw new Error('Firebase Hosting must publish dist to the ksk-house-construction site.');
+          }
+          const html = fs.readFileSync(path.join(config.hosting.public, 'index.html'), 'utf8');
+          const entry = html.match(/src=["']([^"']+\.js)["']/)?.[1];
+          if (!entry) throw new Error('The production HTML does not reference an Expo web bundle.');
+          const bundlePath = path.join(config.hosting.public, entry.replace(/^\/+/, ''));
+          if (!fs.existsSync(bundlePath)) throw new Error(`The referenced web bundle is missing: ${bundlePath}`);
+          const bundle = fs.readFileSync(bundlePath, 'utf8');
+          for (const required of ['Sign In', 'Sign Up', 'Owner Login', 'Add Member', 'Viewer access management']) {
+            if (!bundle.includes(required)) throw new Error(`The production bundle is missing the expected feature: ${required}`);
+          }
+          console.log(`Verified ${bundlePath} includes the current family portal and owner management.`);
+          NODE
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:

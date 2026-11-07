@@ -117,6 +117,8 @@ const tMap: Record<string, string> = {
   'Choose a password with at least 6 characters.': 'குறைந்தது 6 எழுத்துகள் கொண்ட கடவுச்சொல்லைத் தேர்ந்தெடுக்கவும்.',
   'An account already uses this email. Sign in instead.': 'இந்த மின்னஞ்சலுக்கு ஏற்கனவே கணக்கு உள்ளது. உள்நுழையவும்.',
   'Choose your preferred language': 'உங்களுக்கு விருப்பமான மொழியைத் தேர்ந்தெடுக்கவும்',
+  'Choose language': 'மொழியைத் தேர்ந்தெடுக்கவும்',
+  'A phone number is not a sign-in credential. On a new device, the owner must verify a recovery request before access is restored. No SMS code is sent.': 'தொலைபேசி எண் உள்நுழைவு சான்று அல்ல. புதிய சாதனத்தில் அணுகலை மீட்டமைக்க உரிமையாளர் மீட்புக் கோரிக்கையைச் சரிபார்க்க வேண்டும். SMS குறியீடு அனுப்பப்படாது.',
   'Create access request': 'அணுகல் கோரிக்கையை உருவாக்கு',
   'Viewer access is read-only. You cannot edit project records or attachments.': 'பார்வையாளர் அணுகல் படிக்க மட்டும். திட்டப் பதிவுகள் அல்லது இணைப்புகளைத் திருத்த முடியாது.',
   'No project data is available yet.': 'திட்டத் தரவு இன்னும் கிடைக்கவில்லை.',
@@ -244,7 +246,8 @@ function AccessHeader({language, onLanguageChange, onOwnerLogin}: {
   onOwnerLogin?: () => void;
 }) {
   return <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18}}>
-    <View style={{flexDirection: 'row', gap: 12}}>
+    <View style={{flexDirection: 'row', alignItems: 'center', gap: 9}}>
+      <Text style={{fontSize: 10, color: colors.inkMuted}}>{text(language, 'Choose language')}</Text>
       {(['en', 'ta'] as const).map(value => <TouchableOpacity key={value} accessibilityRole="button" accessibilityState={{selected: language === value}} onPress={() => onLanguageChange(value)}>
         <Text style={{fontSize: 12, color: language === value ? colors.primary : colors.inkMuted, fontWeight: '800'}}>{value === 'en' ? 'English' : 'தமிழ்'}</Text>
       </TouchableOpacity>)}
@@ -358,6 +361,7 @@ function AccessForm({mode, language, user, onLanguageChange, onSignIn, onBack, o
         <Text style={headingStyle}>{t(signUp ? 'Sign Up' : 'Sign In')}</Text>
         {signUp ? <TextInput value={fullName} onChangeText={setFullName} placeholder={t('Name')} autoComplete="name" style={inputStyle}/> : null}
         <TextInput value={phone} onChangeText={setPhone} placeholder={t('Mobile number')} keyboardType="phone-pad" autoComplete="tel" style={inputStyle}/>
+        {!signUp ? <Text style={{fontSize: 11, lineHeight: 16, color: colors.inkMuted, marginTop: 2}}>{t('A phone number is not a sign-in credential. On a new device, the owner must verify a recovery request before access is restored. No SMS code is sent.')}</Text> : null}
         <View style={{marginTop: 4}}><ActionButton label={busy ? '…' : t(signUp ? 'Submit Registration' : 'Sign In')} onPress={() => void submit()} disabled={busy}/></View>
         <View style={{marginTop: 9}}><ActionButton label={t('Back')} onPress={onBack} disabled={busy} secondary/></View>
         {message ? <Text accessibilityLiveRegion="polite" style={{fontSize: 12, color: colors.primary, lineHeight: 18, marginTop: 9}}>{t(message)}</Text> : null}

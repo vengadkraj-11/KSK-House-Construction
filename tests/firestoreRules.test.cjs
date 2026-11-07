@@ -243,6 +243,45 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const unsupportedProvider=await commit('custom-viewer',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/custom-viewer`,fields:{uid:stringValue('custom-viewer'),fullName:stringValue('Custom Viewer'),normalizedMobileNumber:stringValue('+15550000000'),status:stringValue('pending'),preferredLanguage:stringValue('en')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
   assert.equal(unsupportedProvider.status,403,'Viewer registration rejects unsupported authentication providers.');
 
+  const invitePhone='+15550004322';
+  const inviteUid='manual-rule-invite';
+  const invitePath=`projects/${project}/databases/(default)/documents/viewerAccess/${inviteUid}`;
+  const ownerInvite=await commit('owner',[
+    {update:{name:invitePath,fields:{
+      uid:stringValue(inviteUid),fullName:stringValue('Manual Invite'),
+      normalizedMobileNumber:stringValue(invitePhone),status:stringValue('approved'),
+      preferredLanguage:stringValue('en'),manualInvite:{booleanValue:true},
+      approverUid:stringValue('owner')
+    }},currentDocument:{exists:false},updateTransforms:[
+      {fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},
+      {fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},
+      {fieldPath:'approvalDate',setToServerValue:'REQUEST_TIME'}
+    ]},
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${invitePhone}`,fields:{uid:stringValue(inviteUid),status:stringValue('approved')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${invitePhone}`,fields:{status:stringValue('approved')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerAccessHistory/manual-${inviteUid}`,fields:{
+      uid:stringValue(inviteUid),fullName:stringValue('Manual Invite'),
+      normalizedMobileNumber:stringValue(invitePhone),action:stringValue('approved'),
+      status:stringValue('approved'),actorUid:stringValue('owner')
+    }},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}
+  ]);
+  assert.equal(ownerInvite.status,200,await ownerInvite.text(),'The owner may create an approved invitation and its private phone indexes.');
+  assert.equal((await request('projects/ksk/sheets/sheet1','unverified-invite-user','GET',undefined,invitePhone,'password')).status,403,'An approved phone invitation does not grant access to a session that only typed its number.');
+  assert.equal((await request(`viewerAccess/${inviteUid}`,'unverified-invite-user')).status,403,'Other users cannot read an approved invitation profile.');
+  assert.equal((await request(`viewerPhoneIndex/${invitePhone}`,'unverified-invite-user')).status,403,'Other users cannot read an approved invitation phone index.');
+  assert.equal((await request(`viewerPhoneStatus/${invitePhone}`,'unverified-invite-user')).status,403,'Other users cannot read an approved invitation phone status.');
+  const viewerInviteAttempt=await commit('unverified-invite-user',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/manual-forged-invite`,fields:{
+    uid:stringValue('manual-forged-invite'),fullName:stringValue('Forged Invite'),
+    normalizedMobileNumber:stringValue('+15550004323'),status:stringValue('approved'),
+    preferredLanguage:stringValue('en'),manualInvite:{booleanValue:true},
+    approverUid:stringValue('unverified-invite-user')
+  }},currentDocument:{exists:false},updateTransforms:[
+    {fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},
+    {fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},
+    {fieldPath:'approvalDate',setToServerValue:'REQUEST_TIME'}
+  ]}],undefined,'password');
+  assert.equal(viewerInviteAttempt.status,403,'Only the authenticated owner may create approved invitations.');
+
   const approved=await decideViewer('password-viewer',phone,'approved');
   assert.equal(approved.status,200,await approved.text());
   const approvedRequest=await request('viewerAccess/password-viewer','password-viewer','GET',undefined,undefined,'password');

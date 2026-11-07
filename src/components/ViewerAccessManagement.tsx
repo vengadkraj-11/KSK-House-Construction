@@ -1,7 +1,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {ActivityIndicator, Modal, Text, TextInput, TouchableOpacity, View} from 'react-native';
 import {
-  clearViewerAccessHistory, clearViewerRequestHistory, decideViewerAccess, decideViewerRecovery,
+  addApprovedViewer, clearViewerAccessHistory, clearViewerRequestHistory, decideViewerAccess, decideViewerRecovery,
   deleteViewerAccount, ensureViewerPhoneIndex, revokeLegacyViewer, subscribeLegacyViewers,
   subscribeViewerAccessHistory, subscribeViewerRecoveryRequests, subscribeViewerRequests,
   ViewerAccessHistoryEntry, ViewerAccessRequest, ViewerRecoveryRequest, ViewerRequestHistoryItem
@@ -48,6 +48,9 @@ export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: 
   const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
   const [confirmation, setConfirmation] = useState<ConfirmAction | null>(null);
   const [busy, setBusy] = useState(false);
+  const [newMemberName, setNewMemberName] = useState('');
+  const [newMemberPhone, setNewMemberPhone] = useState('');
+  const [addingMember, setAddingMember] = useState(false);
   const t = (en: string, ta: string) => language === 'ta' ? ta : en;
 
   useEffect(() => {
@@ -148,6 +151,26 @@ export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: 
     await revokeMember(member);
   };
 
+  const addMember = async () => {
+    if (addingMember || !newMemberName.trim() || !newMemberPhone.trim()) return;
+    setAddingMember(true);
+    setError('');
+    setMessage('');
+    try {
+      await addApprovedViewer(newMemberName, newMemberPhone, ownerUid, language);
+      setNewMemberName('');
+      setNewMemberPhone('');
+      setMessage(t(
+        'Member added as approved. They must create a secure browser session and the owner must verify recovery before project access is enabled.',
+        'உறுப்பினர் அனுமதிக்கப்பட்டார். திட்ட அணுகலுக்கு முன் அவர் பாதுகாப்பான உலாவி அமர்வை உருவாக்கி, உரிமையாளர் மீட்புக் கோரிக்கையைச் சரிபார்க்க வேண்டும்.'
+      ));
+    } catch (issue: any) {
+      setError(issue?.message || t('The member invitation could not be saved.', 'உறுப்பினர் அழைப்பைச் சேமிக்க முடியவில்லை.'));
+    } finally {
+      setAddingMember(false);
+    }
+  };
+
   const confirmAction = async () => {
     if (!confirmation) return;
     const action = confirmation;
@@ -225,6 +248,38 @@ export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: 
     }}/>
 
     <View style={{borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12, marginTop: 14}}>
+      <Text style={{fontSize: 14, fontWeight: '900', color: colors.ink}}>{t('Add Member', 'உறுப்பினரைச் சேர்')}</Text>
+      <Text style={{fontSize: 11, lineHeight: 16, color: colors.inkMuted, marginTop: 4}}>
+        {t('This creates an approved invitation, not an authenticated account. A fresh device still requires owner-verified recovery; a typed phone number alone never grants access.', 'இது அனுமதிக்கப்பட்ட அழைப்பை உருவாக்கும்; அங்கீகரிக்கப்பட்ட கணக்கை அல்ல. புதிய சாதனத்திற்கு உரிமையாளர் சரிபார்த்த மீட்பு தேவை; தொலைபேசி எண்ணை மட்டும் உள்ளிடுவது அணுகலை வழங்காது.')}
+      </Text>
+      <TextInput
+        accessibilityLabel={t('Name', 'பெயர்')}
+        value={newMemberName}
+        onChangeText={setNewMemberName}
+        placeholder={t('Name', 'பெயர்')}
+        autoComplete="name"
+        style={{backgroundColor: colors.canvas, borderRadius: 10, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 12, paddingVertical: 10, color: colors.ink, marginTop: 9}}
+      />
+      <TextInput
+        accessibilityLabel={t('Mobile number', 'மொபைல் எண்')}
+        value={newMemberPhone}
+        onChangeText={setNewMemberPhone}
+        placeholder={t('Mobile number · include country code', 'மொபைல் எண் · நாட்டுக் குறியீட்டைச் சேர்க்கவும்')}
+        keyboardType="phone-pad"
+        autoComplete="tel"
+        style={{backgroundColor: colors.canvas, borderRadius: 10, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 12, paddingVertical: 10, color: colors.ink, marginTop: 9}}
+      />
+      <View style={{marginTop: 9}}>
+        {renderButton(
+          addingMember ? t('Adding…', 'சேர்க்கிறது…') : t('Add approved member', 'அனுமதிக்கப்பட்ட உறுப்பினரைச் சேர்'),
+          () => void addMember(),
+          false,
+          addingMember || !newMemberName.trim() || !newMemberPhone.trim()
+        )}
+      </View>
+    </View>
+
+    <View style={{borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12, marginTop: 14}}>
       <Text style={{fontSize: 14, fontWeight: '900', color: colors.ink}}>{t('Approval column · all requests', 'அனுமதி பட்டியல் · அனைத்து கோரிக்கைகள்')}</Text>
       <Text style={{fontSize: 11, color: colors.inkMuted, marginTop: 4}}>{t('Pending, approved, rejected and revoked registrations remain visible here.', 'நிலுவை, அனுமதி, நிராகரிப்பு மற்றும் நீக்கப்பட்ட பதிவுகள் இங்கு காணப்படும்.')}</Text>
       {filteredMembers.length === 0 ? <Text style={{fontSize: 11, color: colors.inkMuted, marginTop: 8}}>{t('No matching viewer records.', 'பொருந்தும் பார்வையாளர் பதிவுகள் இல்லை.')}</Text> : null}
@@ -244,6 +299,7 @@ export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: 
           <Text selectable style={{fontSize: 10, color: colors.inkMuted, marginTop: 3}}>{t('UID', 'UID')}: {item.uid}</Text>
           <Text style={{fontSize: 10, color: colors.inkMuted, marginTop: 3}}>{t('Registered', 'பதிவு தேதி')}: {dateLabel(item.registeredAt)}{item.decisionAt ? ` · ${t('Last decision', 'கடைசி முடிவு')}: ${dateLabel(item.decisionAt)}` : ''}</Text>
           {item.approvalDate ? <Text style={{fontSize: 10, color: colors.inkMuted, marginTop: 3}}>{t('Approved', 'அனுமதிக்கப்பட்டது')}: {dateLabel(item.approvalDate)}</Text> : null}
+          {item.manualInvite ? <Text style={{fontSize: 10, color: colors.gold, marginTop: 3}}>{t('Secure sign-in setup required', 'பாதுகாப்பான உள்நுழைவு அமைப்பு தேவை')}</Text> : null}
           <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 9}}>
             {item.status === 'pending' ? <>
               {renderButton(t('Approve', 'அனுமதி'), () => void decide(item, 'approved'))}
@@ -259,7 +315,7 @@ export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: 
         <Text style={{fontSize: 13, fontWeight: '900', color: colors.ink}}>{t('Approved Members', 'அனுமதிக்கப்பட்ட உறுப்பினர்கள்')} ({filteredMembers.filter(item => item.status === 'approved').length})</Text>
         {filteredMembers.filter(item => item.status === 'approved').map(item => <View key={`approved:${item.uid}`} style={{borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 8, marginTop: 8}}>
           <Text style={{fontSize: 12, fontWeight: '800', color: colors.ink}}>{item.fullName} · {item.normalizedMobileNumber || t('Legacy member', 'பழைய உறுப்பினர்')}</Text>
-          <Text selectable style={{fontSize: 10, color: colors.inkMuted, marginTop: 3}}>{t('UID', 'UID')}: {item.uid} · {t('Approved', 'அனுமதி')}: {dateLabel(item.approvalDate)}</Text>
+          <Text selectable style={{fontSize: 10, color: colors.inkMuted, marginTop: 3}}>{t('UID', 'UID')}: {item.uid} · {t('Approved', 'அனுமதி')}: {dateLabel(item.approvalDate)}{item.manualInvite ? ` · ${t('Secure sign-in setup required', 'பாதுகாப்பான உள்நுழைவு அமைப்பு தேவை')}` : ''}</Text>
         </View>)}
       </View>
       {recoveryRequests.length ? <View style={{borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12, marginTop: 12}}>

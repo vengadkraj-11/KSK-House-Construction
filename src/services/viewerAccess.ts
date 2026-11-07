@@ -14,6 +14,7 @@ export type ViewerAccessRequest = {
   registeredAt?: any;
   approvalDate?: any;
   approverUid?: string;
+  manualInvite?: boolean;
   decisionAt?: any;
   decidedBy?: string;
   decisionNote?: string;
@@ -146,6 +147,82 @@ export async function registerViewerRequest(
     });
     return {uid, status: 'pending' as const, created: true, currentSession: true};
   });
+}
+
+export async function addApprovedViewer(
+  fullName: string,
+  phone: string,
+  ownerUid: string,
+  preferredLanguage: ViewerLanguage
+) {
+  if (!db) throw new Error('Firebase is not configured.');
+  if (!ownerUid) throw new Error('Only the authenticated project owner can add a member.');
+  const normalizedMobileNumber = normalizePhoneNumber(phone);
+  if (!isValidNormalizedPhone(normalizedMobileNumber)) {
+    throw new Error('Enter a mobile number in international format, including the + country code.');
+  }
+  const name = fullName.trim();
+  if (name.length < 2 || name.length > 120) throw new Error('Enter your full name (2–120 characters).');
+  if (preferredLanguage !== 'en' && preferredLanguage !== 'ta') throw new Error('Choose English or Tamil.');
+
+  const database = db;
+  const inviteUid = `manual_${doc(collection(database, 'viewerAccess')).id}`;
+  const memberRef = accessPath(inviteUid);
+  const indexRef = phonePath(normalizedMobileNumber);
+  const statusRef = phoneStatusPath(normalizedMobileNumber);
+
+  await runTransaction(database, async transaction => {
+    const [member, index, status] = await Promise.all([
+      transaction.get(memberRef),
+      transaction.get(indexRef),
+      transaction.get(statusRef)
+    ]);
+    if (member.exists()) throw new Error('Could not create a unique member invitation. Please try again.');
+    if (index.exists() || status.exists()) throw new Error('This mobile number already has a member or invitation.');
+
+    const timestamp = serverTimestamp();
+    transaction.set(memberRef, {
+      uid: inviteUid,
+      fullName: name,
+      normalizedMobileNumber,
+      status: 'approved',
+      preferredLanguage,
+      manualInvite: true,
+      registeredAt: timestamp,
+      createdAt: timestamp,
+      approvalDate: timestamp,
+      approverUid: ownerUid
+    });
+    transaction.set(indexRef, {
+      uid: inviteUid,
+      status: 'approved',
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    transaction.set(statusRef, {
+      status: 'approved',
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    transaction.set(doc(historyCollection()), {
+      uid: inviteUid,
+      fullName: name,
+      normalizedMobileNumber,
+      action: 'approved',
+      status: 'approved',
+      actorUid: ownerUid,
+      createdAt: timestamp
+    });
+  });
+
+  return {
+    uid: inviteUid,
+    fullName: name,
+    normalizedMobileNumber,
+    status: 'approved' as const,
+    preferredLanguage,
+    manualInvite: true
+  };
 }
 
 export async function lookupViewerAccessByPhone(

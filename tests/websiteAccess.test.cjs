@@ -80,3 +80,17 @@ test('signed-out website offers separate sign-in and sign-up with a discreet own
   assert.doesNotMatch(viewer, /setMobileConfirmed\(false\);\s*\},\s*\[user\?\.uid,\s*access\?\.status/);
   assert.match(viewer, /if \(recovery\.status === 'pending'\) setMessage/);
 });
+
+test('a saved approved family session restores directly to the dashboard without a sign-in loop', () => {
+  const viewer = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'FamilyViewer.tsx'), 'utf8');
+  const persistence = viewer.indexOf('setPersistence(browserAuth, browserLocalPersistence)');
+  const authObserver = viewer.indexOf('onAuthStateChanged(browserAuth');
+  const accessListener = viewer.indexOf("subscribeViewerRequest(user.uid");
+  assert.ok(persistence >= 0 && persistence < authObserver, 'Local Auth persistence must be configured before restoring the saved user.');
+  assert.ok(authObserver < accessListener, 'The saved Auth user must be followed by membership resolution.');
+  assert.match(viewer, /setMobileConfirmed\(request\?\.status === 'approved'\)/);
+  assert.match(viewer, /const canRead = !!user && \(legacyViewer \|\| \(access\?\.status === 'approved' && mobileConfirmed\)\)/);
+  assert.match(viewer, /if \(user && accessMode === 'home' && \(!accessChecked \|\| !legacyCheckComplete\)\)/);
+  assert.match(viewer, /return <FamilyData[\s\S]*?sheetsLoading \|\| !\(/);
+  assert.match(viewer, /onSignOut=\{\(\) => \{\s*setMobileConfirmed\(false\);/);
+});

@@ -10,11 +10,12 @@ function createViewerAccess() {
   let timestamp = 0;
   let autoId = 0;
   let transactionQueue = Promise.resolve();
-  const reference = (...parts) => ({
-    path: parts.length === 1 && parts[0]?.path
+  const reference = (...parts) => {
+    const refPath = parts.length === 1 && parts[0]?.path
       ? `${parts[0].path}/generated-${++autoId}`
-      : parts.slice(1).join('/')
-  });
+      : parts.slice(1).join('/');
+    return {path: refPath, id: refPath.split('/').pop()};
+  };
   const snapshot = ref => {
     const data = documents.get(ref.path);
     return {exists: () => data !== undefined, data: () => data};
@@ -153,6 +154,33 @@ test('approved members returning or choosing Sign Up do not create or reset a re
   assert.equal(documents.get('viewerAccess/approved-uid').status, 'approved');
   assert.equal(documents.get('viewerAccess/approved-uid').fullName, 'Approved Member');
   assert.equal(documents.size, 3);
+});
+
+test('owner can add an approved invitation without granting access to a phone-only session', async () => {
+  const {addApprovedViewer, lookupViewerAccessByPhone, documents} = createViewerAccess();
+  const invite = await addApprovedViewer('Invited Member', '9876543210', 'owner', 'ta');
+
+  assert.equal(invite.status, 'approved');
+  assert.equal(invite.manualInvite, true);
+  assert.equal(invite.normalizedMobileNumber, '+919876543210');
+  assert.equal(documents.get(`viewerAccess/${invite.uid}`).approverUid, 'owner');
+  assert.equal(documents.get('viewerPhoneIndex/+919876543210').uid, invite.uid);
+  assert.equal(documents.get('viewerPhoneStatus/+919876543210').status, 'approved');
+  assert.equal(documents.get('viewerAccessHistory/generated-2').action, 'approved');
+  assert.equal(await lookupViewerAccessByPhone('fresh-session', '9876543210'), null);
+});
+
+test('manual member addition rejects duplicate phone numbers and invalid details', async () => {
+  const {addApprovedViewer, documents} = createViewerAccess();
+  await addApprovedViewer('First Member', '9876543210', 'owner', 'en');
+
+  await assert.rejects(
+    addApprovedViewer('Second Member', '+91 98765 43210', 'owner', 'en'),
+    /already has a member or invitation/
+  );
+  await assert.rejects(addApprovedViewer(' ', '9876543211', 'owner', 'en'), /full name/);
+  await assert.rejects(addApprovedViewer('Another Member', 'invalid', 'owner', 'en'), /mobile number/);
+  assert.equal([...documents.keys()].filter(key => key.startsWith('viewerAccess/')).length, 1);
 });
 
 test('a different session cannot enumerate another member through phone status lookup', async () => {
