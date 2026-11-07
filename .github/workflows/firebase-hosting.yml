@@ -71,7 +71,7 @@ jobs:
           const bundlePath = path.join(config.hosting.public, entry.replace(/^\/+/, ''));
           if (!fs.existsSync(bundlePath)) throw new Error(`The referenced web bundle is missing: ${bundlePath}`);
           const bundle = fs.readFileSync(bundlePath, 'utf8');
-          for (const required of ['Sign In', 'Sign Up', 'Owner Login', 'Add Member', 'Viewer access management']) {
+          for (const required of ['Sign In', 'Owner Login', 'Mobile number', 'Family Members', 'Member List', 'Edit Member']) {
             if (!bundle.includes(required)) throw new Error(`The production bundle is missing the expected feature: ${required}`);
           }
           console.log(`Verified ${bundlePath} includes the current family portal and owner management.`);
