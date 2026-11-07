@@ -28,6 +28,9 @@ import {createLoginHistorySession, clearLoginHistory, loginHistoryDate, LoginHis
 import {downloadBase64File, printHtmlInBrowser} from './src/services/webFiles';
 import {Alert} from './src/services/platformAlert';
 import {KSK_DESIGN} from './src/theme/kskDesignSystem';
+import {getPreferredLanguage, savePreferredLanguage, shouldRenderFamilyViewer} from './src/services/websiteAccess';
+import FamilyViewer from './src/components/FamilyViewer';
+import ViewerAccessManagement from './src/components/ViewerAccessManagement';
 
 const C = {
   ink: KSK_DESIGN.colors.ink, muted: KSK_DESIGN.colors.inkMuted,
@@ -99,11 +102,17 @@ function SectionTitle({title, right, onRight}: any) {
   </View>;
 }
 
-function LoginScreen({onLogin, demo}: {onLogin: (email: string, password: string) => void; demo?: () => void}) {
+function LoginScreen({onLogin, demo, language = 'en', onBack}: {
+  onLogin: (email: string, password: string) => void;
+  demo?: () => void;
+  language?: 'en' | 'ta';
+  onBack?: () => void;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const t = (english: string, tamil: string) => language === 'ta' ? tamil : english;
   const submit=async()=>{
     if(loading||!email.trim()||!password)return;
     setLoading(true);
@@ -117,28 +126,63 @@ function LoginScreen({onLogin, demo}: {onLogin: (email: string, password: string
         <Text style={{fontSize: 25, color: '#FFFFFF', fontWeight: '900', letterSpacing: 1}}>KSK</Text>
       </View>
       <Text style={{fontSize: KSK_DESIGN.typography.display, fontWeight: '900', textAlign: 'center', color: C.ink}}>KSK House Construction</Text>
-      <Text style={{fontSize: 14, textAlign: 'center', color: C.muted, marginTop: 7, marginBottom: 28}}>Project management · Secure access</Text>
+      <Text style={{fontSize: 14, textAlign: 'center', color: C.muted, marginTop: 7, marginBottom: 28}}>{t('Project management · Secure access', 'திட்ட மேலாண்மை · பாதுகாப்பான அணுகல்')}</Text>
       <View style={cardStyle({padding: 22})}>
         {!isFirebaseConfigured ? <>
-          <Pill color={C.goldBg} textColor={C.gold}>LOCAL PREVIEW</Pill>
-          <Text style={{fontSize: 19, fontWeight: '800', color: C.ink, marginTop: 14}}>Cloud connection not set up</Text>
-          <Text style={{fontSize: 13, lineHeight: 20, color: C.muted, marginTop: 7}}>The workbook data is bundled in this app project. Add your Firebase project settings and deploy the access rules to enable account sign-in, live sync and father’s read-only access.</Text>
-          <Text style={{fontSize: 12, fontWeight: '700', color: C.ink, marginTop: 18}}>Firebase setup is described in README.md.</Text>
+          <Pill color={C.goldBg} textColor={C.gold}>{t('LOCAL PREVIEW', 'உள்ளூர் முன்னோட்டம்')}</Pill>
+          <Text style={{fontSize: 19, fontWeight: '800', color: C.ink, marginTop: 14}}>{t('Cloud connection not set up', 'கிளவுட் இணைப்பு அமைக்கப்படவில்லை')}</Text>
+          <Text style={{fontSize: 13, lineHeight: 20, color: C.muted, marginTop: 7}}>{t('The workbook data is bundled in this app project. Add your Firebase project settings and deploy the access rules to enable account sign-in and live sync.', 'கணக்கில் உள்நுழைவு மற்றும் நேரடி ஒத்திசைவை இயக்க Firebase அமைப்புகளைச் சேர்த்து அணுகல் விதிகளை வெளியிடவும்.')}</Text>
+          <Text style={{fontSize: 12, fontWeight: '700', color: C.ink, marginTop: 18}}>{t('Firebase setup is described in README.md.', 'Firebase அமைப்பு README.md-இல் விளக்கப்பட்டுள்ளது.')}</Text>
         </> : <>
-          <Text style={{fontSize: 18, fontWeight: '800', color: C.ink, marginBottom: 14}}>Sign in to your project</Text>
-          <Text style={{fontSize: 12, fontWeight: '700', color: C.muted, marginBottom: 6}}>EMAIL</Text>
+          <Text style={{fontSize: 18, fontWeight: '800', color: C.ink, marginBottom: 14}}>{t('Owner Login', 'உரிமையாளர் உள்நுழைவு')}</Text>
+          <Text style={{fontSize: 12, fontWeight: '700', color: C.muted, marginBottom: 6}}>{t('EMAIL', 'மின்னஞ்சல்')}</Text>
           <TextInput value={email} onChangeText={setEmail} autoCapitalize="none" autoComplete="email" textContentType="emailAddress" keyboardType="email-address" returnKeyType="next" placeholder="you@example.com" placeholderTextColor="#9AA8A2" style={{backgroundColor: C.paper, borderRadius: KSK_DESIGN.radius.sm, borderWidth: 1, borderColor: C.line, padding: 14, minHeight: 50, color: C.ink, marginBottom: 13}} />
-          <Text style={{fontSize: 12, fontWeight: '700', color: C.muted, marginBottom: 6}}>PASSWORD</Text>
+          <Text style={{fontSize: 12, fontWeight: '700', color: C.muted, marginBottom: 6}}>{t('PASSWORD', 'கடவுச்சொல்')}</Text>
           <View style={{flexDirection:'row',alignItems:'center',backgroundColor:C.paper,borderRadius:KSK_DESIGN.radius.sm,borderWidth:1,borderColor:C.line,marginBottom:15}}>
-            <TextInput value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoComplete="current-password" textContentType="password" returnKeyType="go" onSubmitEditing={()=>void submit()} placeholder="Enter password" placeholderTextColor="#9AA8A2" style={{flex:1,padding:14,minHeight:50,color:C.ink}} />
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel={showPassword?'Hide password':'Show password'} onPress={()=>setShowPassword(value=>!value)} hitSlop={8} style={{padding:12}}><Text style={{fontSize:12,fontWeight:'800',color:C.green}}>{showPassword?'Hide':'Show'}</Text></TouchableOpacity>
+            <TextInput value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoComplete="current-password" textContentType="password" returnKeyType="go" onSubmitEditing={()=>void submit()} placeholder={t('Enter password', 'கடவுச்சொல்லை உள்ளிடவும்')} placeholderTextColor="#9AA8A2" style={{flex:1,padding:14,minHeight:50,color:C.ink}} />
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={showPassword?t('Hide password', 'கடவுச்சொல்லை மறை'):t('Show password', 'கடவுச்சொல்லைக் காட்டு')} onPress={()=>setShowPassword(value=>!value)} hitSlop={8} style={{padding:12}}><Text style={{fontSize:12,fontWeight:'800',color:C.green}}>{showPassword?t('Hide', 'மறை'):t('Show', 'காட்டு')}</Text></TouchableOpacity>
           </View>
           <TouchableOpacity disabled={loading || !email.trim() || !password} onPress={()=>void submit()} style={buttonStyle(loading || !email.trim() || !password)}>
-            {loading ? <ActivityIndicator color="#FFF" /> : <Text style={{color: '#FFF', fontWeight: '800'}}>Sign in securely</Text>}
+            {loading ? <ActivityIndicator color="#FFF" /> : <Text style={{color: '#FFF', fontWeight: '800'}}>{t('Sign in securely', 'பாதுகாப்பாக உள்நுழை')}</Text>}
           </TouchableOpacity>
-          <Text style={{fontSize: 11, color: C.muted, textAlign: 'center', marginTop: 13}}>Your role is assigned by the project administrator. Only the owner account can edit construction data.</Text>
+          {onBack ? <TouchableOpacity accessibilityRole="button" onPress={onBack} style={{padding: 12, marginTop: 5}}><Text style={{color: C.green, fontWeight: '800', textAlign: 'center'}}>{t('Back to access selection', 'அணுகல் தேர்வுக்குத் திரும்பு')}</Text></TouchableOpacity> : null}
+          <Text style={{fontSize: 11, color: C.muted, textAlign: 'center', marginTop: 13}}>{t('Your existing owner account and sign-in method are unchanged.', 'உங்கள் தற்போதைய உரிமையாளர் கணக்கும் உள்நுழைவு முறையும் மாற்றப்படவில்லை.')}</Text>
         </>}
       </View>
+    </ScrollView>
+  </SafeAreaView>;
+}
+
+function WebsiteAccessScreen({language, onLanguageChange, onOwnerLogin, onFamilyLogin}: {
+  language: 'en' | 'ta';
+  onLanguageChange: (value: 'en' | 'ta') => void;
+  onOwnerLogin: () => void;
+  onFamilyLogin: () => void;
+}) {
+  const t = (english: string, tamil: string) => language === 'ta' ? tamil : english;
+  const accessButton = (title: string, detail: string, onPress: () => void) => (
+    <TouchableOpacity accessibilityRole="button" onPress={onPress} style={cardStyle({padding: 20, marginTop: 12, borderColor: C.line})}>
+      <Text style={{fontSize: 17, color: C.ink, fontWeight: '900'}}>{title}</Text>
+      <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>{detail}</Text>
+    </TouchableOpacity>
+  );
+  return <SafeAreaView style={{flex: 1, backgroundColor: C.paper}}>
+    <StatusBar barStyle="dark-content"/>
+    <ScrollView contentContainerStyle={{flexGrow: 1, justifyContent: 'center', padding: 22}}>
+      <View style={{alignSelf: 'center', width: 68, height: 68, borderRadius: 21, backgroundColor: C.dark, alignItems: 'center', justifyContent: 'center', marginBottom: 17}}>
+        <Text style={{fontSize: 23, color: '#FFF', fontWeight: '900', letterSpacing: 1}}>KSK</Text>
+      </View>
+      <Text style={{fontSize: KSK_DESIGN.typography.display, fontWeight: '900', textAlign: 'center', color: C.ink}}>KSK House Construction</Text>
+      <Text style={{fontSize: 13, textAlign: 'center', color: C.muted, marginTop: 7}}>{t('Secure project access for the owner and family', 'உரிமையாளர் மற்றும் குடும்பத்தினருக்கான பாதுகாப்பான அணுகல்')}</Text>
+      <View style={cardStyle({padding: 18, marginTop: 23})}>
+        <Text style={{fontSize: 15, fontWeight: '900', color: C.ink}}>{t('Preferred language', 'விருப்பமான மொழி')}</Text>
+        <View style={{flexDirection: 'row', gap: 10, marginTop: 11}}>
+          <View style={{flex: 1}}><TouchableOpacity accessibilityRole="button" accessibilityState={{selected: language === 'en'}} onPress={() => onLanguageChange('en')} style={{...buttonStyle(false, language !== 'en'), minHeight: 46}}><Text style={{fontWeight: '800', color: language === 'en' ? '#FFF' : C.green}}>English</Text></TouchableOpacity></View>
+          <View style={{flex: 1}}><TouchableOpacity accessibilityRole="button" accessibilityState={{selected: language === 'ta'}} onPress={() => onLanguageChange('ta')} style={{...buttonStyle(false, language !== 'ta'), minHeight: 46}}><Text style={{fontWeight: '800', color: language === 'ta' ? '#FFF' : C.green}}>தமிழ்</Text></TouchableOpacity></View>
+        </View>
+      </View>
+      {accessButton(t('Owner Login', 'உரிமையாளர் உள்நுழைவு'), t('Sign in with the existing owner account.', 'தற்போதைய உரிமையாளர் கணக்கில் உள்நுழையவும்.'), onOwnerLogin)}
+      {accessButton(t('Family Viewer Login', 'குடும்பப் பார்வையாளர் உள்நுழைவு'), t('Read approved project information and download bills or receipts.', 'அனுமதிக்கப்பட்ட திட்டத் தகவலைப் படித்து பில்கள் அல்லது ரசீதுகளைப் பதிவிறக்கவும்.'), onFamilyLogin)}
     </ScrollView>
   </SafeAreaView>;
 }
@@ -1058,6 +1102,7 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
         </Picker>
       </View>
     </View>
+    {owner && user?.uid ? <ViewerAccessManagement ownerUid={user.uid} language={language}/> : null}
 
     <View style={cardStyle({marginBottom:12})}>
       <SectionTitle title={t('Project activity','திட்டச் செயல்பாடு')} right={t('Open activity','செயல்பாட்டைத் திற')} onRight={onViewActivity}/>
@@ -1148,13 +1193,19 @@ function AppContent() {
   const [demoMode, setDemoMode] = useState(false);
   const [language, setLanguage] = useState<'en' | 'ta'>('en');
   const [languageLoaded, setLanguageLoaded] = useState(false);
+  const [webEntry, setWebEntry] = useState<'choices' | 'owner-login'>('choices');
+  const [showViewerAccessAfterLogin, setShowViewerAccessAfterLogin] = useState(false);
 
   useEffect(() => {
     let active = true;
     AsyncStorage.getItem('ksk_app_language')
       .then(saved => {
-        if (active && (saved === 'en' || saved === 'ta')) {
-          setLanguage(saved);
+        const browserSaved = Platform.OS === 'web' && typeof window !== 'undefined'
+          ? getPreferredLanguage(window.localStorage)
+          : null;
+        const preferred = browserSaved || saved;
+        if (active && (preferred === 'en' || preferred === 'ta')) {
+          setLanguage(preferred);
         }
       })
       .catch(() => {})
@@ -1167,6 +1218,9 @@ function AppContent() {
   const changeLanguage = async (next: 'en' | 'ta') => {
     setLanguage(next);
     try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        savePreferredLanguage(window.localStorage, next);
+      }
       await AsyncStorage.setItem('ksk_app_language', next);
     } catch {
       Alert.alert('Language', 'Could not save language preference.');
@@ -1312,15 +1366,23 @@ function AppContent() {
     try {
       if (!auth) throw new Error('Firebase configuration is missing.');
       await signInWithEmailAndPassword(auth, email, password);
+      setShowViewerAccessAfterLogin(true);
     } catch (e: any) {
       Alert.alert('Sign-in failed', e?.message || 'Check your email and password.');
     }
   };
 
+  useEffect(() => {
+    if (!showViewerAccessAfterLogin || !user || !roleChecked) return;
+    if (role === 'owner') setScreen('Settings');
+    setShowViewerAccessAfterLogin(false);
+  }, [showViewerAccessAfterLogin, user?.uid, role, roleChecked]);
+
   const performSignOut = async () => {
     if (auth) await signOut(auth);
     setDemoMode(false);
     setScreen('Dashboard');
+    if (Platform.OS === 'web') setWebEntry('choices');
   };
 
   const openSheet = (id: string) => {
@@ -1627,8 +1689,21 @@ function AppContent() {
   };
 
   if (isFirebaseConfigured && !demoMode && (!user || !roleChecked || !role)) {
-    if (!user) return <LoginScreen onLogin={signIn} demo={() => {setDemoMode(true); setSheets(LOCAL_WORKBOOK);}} />;
+    if (!user) {
+      if (Platform.OS === 'web') {
+        if (!languageLoaded) return <SafeAreaView style={{flex: 1, backgroundColor: C.paper, justifyContent: 'center', alignItems: 'center'}}><ActivityIndicator color={C.green}/></SafeAreaView>;
+        if (webEntry === 'choices') return <WebsiteAccessScreen
+          language={language}
+          onLanguageChange={value => void changeLanguage(value)}
+          onOwnerLogin={() => setWebEntry('owner-login')}
+          onFamilyLogin={() => {window.location.href = '/family';}}
+        />;
+        return <LoginScreen language={language} onBack={() => setWebEntry('choices')} onLogin={signIn}/>;
+      }
+      return <LoginScreen onLogin={signIn} demo={() => {setDemoMode(true); setSheets(LOCAL_WORKBOOK);}} />;
+    }
     if (!roleChecked) return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', alignItems:'center'}}><ActivityIndicator color={C.green}/><Text style={{color:C.muted, marginTop:12}}>{language === 'ta' ? 'திட்ட அணுகலைச் சரிபார்க்கிறது…' : 'Checking project access…'}</Text></SafeAreaView>;
+    if (Platform.OS === 'web' && shouldRenderFamilyViewer('/', role, !!user)) return <FamilyViewer />;
     const accessMessage = membershipIssue === 'missing'
       ? 'User membership document is missing at users/{authenticatedUid}.'
       : membershipIssue === 'wrong-project'
@@ -1638,6 +1713,8 @@ function AppContent() {
           : 'Membership role must be "owner" or "viewer" for project "ksk".';
     return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', padding:24}}><View style={cardStyle()}><Text style={{fontSize:20, fontWeight:'900', color:C.ink}}>{language === 'ta' ? 'அணுகல் ஒதுக்கப்படவில்லை' : 'Project membership issue'}</Text><Text style={{fontSize:13, lineHeight:20, color:C.muted, marginTop:9}}>{language === 'ta' ? 'இந்த Firebase கணக்கிற்கு KSK திட்டத்தில் உரிமையாளர் அல்லது பார்வையாளர் அனுமதி இல்லை. Firestore-இல் அனுமதியை ஒதுக்க திட்ட நிர்வாகியிடம் கேட்டு மீண்டும் உள்நுழையவும்.' : accessMessage}</Text><TouchableOpacity onPress={performSignOut} style={{...buttonStyle(), marginTop:16}}><Text style={{color:'#FFF', fontWeight:'800'}}>{language === 'ta' ? 'வெளியேறு' : 'Sign out'}</Text></TouchableOpacity></View></SafeAreaView>;
   }
+
+  if (Platform.OS === 'web' && shouldRenderFamilyViewer('/', role, !!user)) return <FamilyViewer />;
 
   const syncLabel = demoMode || !user ? 'LOCAL PREVIEW' : syncState;
   const canEdit = role === 'owner' && !demoMode && !!user;
@@ -1778,5 +1855,8 @@ function AppContent() {
 }
 
 export default function App() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && shouldRenderFamilyViewer(window.location.pathname, null)) {
+    return <SafeAreaProvider><FamilyViewer /></SafeAreaProvider>;
+  }
   return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
 }

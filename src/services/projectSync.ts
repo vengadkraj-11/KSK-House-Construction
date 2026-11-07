@@ -1,10 +1,10 @@
 import {
-  collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query,
-  serverTimestamp, setDoc, updateDoc, writeBatch
+  collection, doc, documentId, getDoc, getDocs, limit, onSnapshot, orderBy, query,
+  serverTimestamp, setDoc, updateDoc, where, writeBatch
 } from 'firebase/firestore';
 
 import {db} from '../firebase';
-import {LOCAL_WORKBOOK, QUOTE_TEMPLATE} from '../data';
+import {LOCAL_WORKBOOK, QUOTE_TEMPLATE, SHEET_ORDER} from '../data';
 import {SheetDocument, SheetMap} from '../types';
 
 const PROJECT_ID = 'ksk';
@@ -77,6 +77,25 @@ export function subscribeSheets(
         next[d.id] = decodeSheet(d.data());
       });
 
+      onChange(next, snapshot.size);
+    },
+    error => onError(error.message)
+  );
+}
+
+export function subscribeViewerSheets(
+  onChange: (sheets: SheetMap, count: number) => void,
+  onError: (message: string) => void
+) {
+  if (!db) return () => {};
+
+  return onSnapshot(
+    query(sheetsPath(), where(documentId(), 'in', SHEET_ORDER)),
+    snapshot => {
+      const next: SheetMap = {};
+      snapshot.docs.forEach(d => {
+        next[d.id] = decodeSheet(d.data());
+      });
       onChange(next, snapshot.size);
     },
     error => onError(error.message)

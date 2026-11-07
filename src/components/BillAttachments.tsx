@@ -190,7 +190,12 @@ export default function BillAttachments({
   const downloadImage = async (item: BillImage) => {
     if (Platform.OS === 'web' && item.imageBase64) {
       const safeName = (item.fileName || `receipt-${item.id}.jpg`).replace(/[^a-zA-Z0-9._-]/g, '_');
-      downloadBase64File(item.imageBase64, safeName, 'image/jpeg');
+      if (!downloadBase64File(item.imageBase64, safeName, 'image/jpeg')) {
+        Alert.alert(
+          t('Download unavailable', 'பதிவிறக்கம் கிடைக்கவில்லை'),
+          t(`The ${label} could not be prepared for download.`, 'பதிவிறக்கப் படத்தைத் தயாரிக்க முடியவில்லை.')
+        );
+      }
       return;
     }
     if (!item.imageBase64 || !FileSystem.cacheDirectory) {
