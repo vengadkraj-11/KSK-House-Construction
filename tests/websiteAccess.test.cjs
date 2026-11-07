@@ -79,6 +79,8 @@ test('signed-out website offers separate sign-in and sign-up with a discreet own
   assert.match(viewer, /Your registration is awaiting owner approval\./);
   assert.match(viewer, /lookupViewerAccessByPhone\(requester\.uid, normalizedPhone\)/);
   assert.match(viewer, /requestViewerRecovery\(requester\.uid, normalizedPhone\)/);
+  assert.match(viewer, /if \(recovery\.currentSession && recovery\.request\)/);
+  assert.match(viewer, /onApproved\(recovery\.request\)/);
   assert.match(viewer, /setMobileConfirmed\(!!request && canContinueWithApprovedSession\(/);
   assert.doesNotMatch(viewer, /setMobileConfirmed\(false\);\s*\},\s*\[user\?\.uid,\s*access\?\.status/);
   assert.match(viewer, /if \(recovery\.status === 'pending'\) setMessage/);

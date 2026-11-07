@@ -341,8 +341,21 @@ function AccessForm({mode, language, user, onLanguageChange, onSignIn, onBack, o
           }
           throw issue;
         }
+        if (recovery.currentSession && recovery.request) {
+          if (canContinueWithApprovedSession(requester.uid, recovery.request, normalizedPhone)) {
+            onApproved(recovery.request);
+          } else if (recovery.request.status === 'pending') {
+            setMessage('Your registration is awaiting owner approval.');
+          } else if (recovery.request.status === 'rejected') {
+            setMessage('This account has been rejected. Contact the project owner.');
+          } else if (recovery.request.status === 'revoked') {
+            setMessage('Access to this account was revoked. Contact the project owner.');
+          } else {
+            setMessage('This account could not be securely verified. Contact the project owner.');
+          }
+          return;
+        }
         if (recovery.status === 'pending') setMessage('Your sign-in recovery is awaiting owner verification.');
-        else if (recovery.status === 'approved' && recovery.currentSession) setMessage('This mobile number is already associated with a member account. Contact the project owner.');
         else setMessage('This number is already approved. Sign in on its saved browser or request secure recovery.');
       }
     } catch (issue: any) {

@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDoc, getDocs, limit, onSnapshot, query, runTransaction, serverTimestamp, updateDoc, where, writeBatch
+  collection, doc, getDoc, getDocFromServer, getDocs, limit, onSnapshot, query, runTransaction, serverTimestamp, updateDoc, where, writeBatch
 } from 'firebase/firestore';
 import {db} from '../firebase';
 
@@ -242,11 +242,13 @@ export async function lookupViewerAccessByPhone(
     throw new Error('Enter a mobile number in international format, including the + country code.');
   }
 
-  const currentRequest = authenticatedUid ? await getDoc(accessPath(authenticatedUid)) : null;
+  const currentRequest = authenticatedUid ? await getDocFromServer(accessPath(authenticatedUid)) : null;
   if (currentRequest?.exists()) {
     const request = currentRequest.data() as ViewerAccessRequest;
-    if (request.normalizedMobileNumber === normalizedMobileNumber) {
-      return {uid: authenticatedUid!, status: request.status, request, currentSession: true};
+    const memberPhone = normalizePhoneNumber(request.normalizedMobileNumber || '');
+    if (memberPhone === normalizedMobileNumber) {
+      const currentMember = {...request, normalizedMobileNumber: memberPhone};
+      return {uid: authenticatedUid!, status: currentMember.status, request: currentMember, currentSession: true};
     }
   }
   return null;
@@ -269,14 +271,16 @@ export async function requestViewerRecovery(uid: string, phone: string) {
     ]);
     if (currentRequest.exists()) {
       const current = currentRequest.data() as ViewerAccessRequest;
-      if (current.normalizedMobileNumber === normalizedMobileNumber) {
-        return {status: current.status, created: false, currentSession: true};
+      const memberPhone = normalizePhoneNumber(current.normalizedMobileNumber || '');
+      if (memberPhone === normalizedMobileNumber) {
+        const request = {...current, normalizedMobileNumber: memberPhone};
+        return {status: request.status, created: false, currentSession: true, request};
       }
       throw new Error('This session already has a family access record. Contact the project owner for account recovery.');
     }
     if (recovery.exists()) {
       const existing = recovery.data() as ViewerRecoveryRequest;
-      if (existing.normalizedMobileNumber !== normalizedMobileNumber) {
+      if (normalizePhoneNumber(existing.normalizedMobileNumber || '') !== normalizedMobileNumber) {
         throw new Error('This session already has a recovery request for another mobile number.');
       }
       return {status: existing.status, created: false, currentSession: false};

@@ -47,6 +47,7 @@ function createViewerAccess() {
     query: (ref, ...constraints) => ({path: ref.path, constraints}),
     serverTimestamp: () => `server-time-${++timestamp}`,
     getDoc: async ref => snapshot(ref),
+    getDocFromServer: async ref => snapshot(ref),
     getDocs: async queryRef => {
       const filters = queryRef.constraints?.filter(item => item.field) || [];
       let docs = [...documents.entries()]
@@ -131,6 +132,25 @@ test('a pending member submitting again is idempotent and keeps pending status',
   assert.equal(documents.size, 4);
 });
 
+test('signup approval enables first and later logins without another approval', async () => {
+  const {registerViewerRequest, decideViewerAccess, lookupViewerAccessByPhone, canContinueWithApprovedSession, documents} = createViewerAccess();
+  const registration = await registerViewerRequest('persistent-uid', '9876543210', 'Persistent Member', 'en');
+  assert.equal(registration.status, 'pending');
+  assert.equal(canContinueWithApprovedSession('persistent-uid', documents.get('viewerAccess/persistent-uid'), '9876543210'), false);
+
+  await decideViewerAccess(documents.get('viewerAccess/persistent-uid'), 'approved', 'owner');
+  const firstLogin = await lookupViewerAccessByPhone('persistent-uid', '+91 (98765) 43210');
+  assert.equal(firstLogin.status, 'approved');
+  assert.equal(canContinueWithApprovedSession('persistent-uid', firstLogin.request, '+919876543210'), true);
+
+  const laterLogin = await lookupViewerAccessByPhone('persistent-uid', '0091-98765-43210');
+  assert.equal(laterLogin.status, 'approved');
+  assert.equal(canContinueWithApprovedSession('persistent-uid', laterLogin.request, '9876543210'), true);
+  assert.equal((await registerViewerRequest('persistent-uid', '+91 98765 43210', 'Changed Name', 'ta')).created, false);
+  assert.equal(documents.get('viewerAccess/persistent-uid').status, 'approved');
+  assert.equal([...documents.keys()].filter(key => key.startsWith('viewerAccess/')).length, 1);
+});
+
 test('approved members returning or choosing Sign Up do not create or reset a request', async () => {
   const {registerViewerRequest, lookupViewerAccessByPhone, canContinueWithApprovedSession, documents} = createViewerAccess();
   const request = {
@@ -160,6 +180,40 @@ test('approved members returning or choosing Sign Up do not create or reset a re
   assert.equal(documents.get('viewerAccess/approved-uid').status, 'approved');
   assert.equal(documents.get('viewerAccess/approved-uid').fullName, 'Approved Member');
   assert.equal(documents.size, 3);
+});
+
+test('approved membership takes precedence over an old pending recovery request', async () => {
+  const {lookupViewerAccessByPhone, requestViewerRecovery, canContinueWithApprovedSession, documents} = createViewerAccess();
+  const member = {
+    uid: 'approved-session',
+    fullName: 'Approved Member',
+    normalizedMobileNumber: '+919876543210',
+    status: 'approved',
+    preferredLanguage: 'en',
+    projectId: 'ksk',
+    role: 'viewer',
+    approvalDate: 'approval-time'
+  };
+  documents.set('viewerAccess/approved-session', member);
+  documents.set('viewerPhoneIndex/+919876543210', {uid: member.uid, status: 'approved'});
+  documents.set('viewerPhoneStatus/+919876543210', {status: 'approved'});
+  documents.set('viewerRecoveryRequests/approved-session', {
+    uid: member.uid,
+    normalizedMobileNumber: '+91 (98765) 43210',
+    status: 'pending'
+  });
+
+  const lookup = await lookupViewerAccessByPhone(member.uid, '0091 98765 43210');
+  assert.equal(lookup.status, 'approved');
+  assert.equal(canContinueWithApprovedSession(member.uid, lookup.request, '+91 98765 43210'), true);
+
+  const recovery = await requestViewerRecovery(member.uid, '9876543210');
+  assert.equal(recovery.status, 'approved');
+  assert.equal(recovery.currentSession, true);
+  assert.equal(recovery.request.status, 'approved');
+  assert.equal(canContinueWithApprovedSession(member.uid, recovery.request, '+919876543210'), true);
+  assert.equal(documents.get('viewerRecoveryRequests/approved-session').status, 'pending');
+  assert.equal([...documents.keys()].filter(key => key.startsWith('viewerRecoveryRequests/')).length, 1);
 });
 
 test('owner can add an approved invitation without granting access to a phone-only session', async () => {
