@@ -1,6 +1,10 @@
 import React, {useEffect, useState} from 'react';
 import {ActivityIndicator, Text, TouchableOpacity, View} from 'react-native';
-import {decideViewerAccess, revokeLegacyViewer, subscribeLegacyViewers, subscribeViewerRequests, ViewerAccessRequest} from '../services/viewerAccess';
+import {
+  decideViewerAccess, decideViewerRecovery, ensureViewerPhoneIndex, revokeLegacyViewer,
+  subscribeLegacyViewers, subscribeViewerRecoveryRequests, subscribeViewerRequests,
+  ViewerAccessRequest, ViewerRecoveryRequest
+} from '../services/viewerAccess';
 import {KSK_DESIGN} from '../theme/kskDesignSystem';
 
 const colors = KSK_DESIGN.colors;
@@ -12,6 +16,7 @@ const dateLabel = (value: any) => {
 export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: string; language: 'en' | 'ta'}) {
   const [requests, setRequests] = useState<ViewerAccessRequest[]>([]);
   const [legacyViewers, setLegacyViewers] = useState<ViewerAccessRequest[]>([]);
+  const [recoveryRequests, setRecoveryRequests] = useState<ViewerRecoveryRequest[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [workingUid, setWorkingUid] = useState('');
@@ -20,21 +25,29 @@ export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: 
   useEffect(() => {
     const stopRequests = subscribeViewerRequests(items => {
       setRequests(items);
-      setError('');
       setLoading(false);
+      void Promise.all(items.map(ensureViewerPhoneIndex)).catch(issue => {
+        setError(issue?.message || 'Existing viewer records could not be indexed.');
+      });
     }, issue => {
       setError(issue.message);
       setLoading(false);
     });
     const stopLegacy = subscribeLegacyViewers(items => {
       setLegacyViewers(items);
-      setError('');
       setLoading(false);
     }, issue => {
       setError(issue.message);
       setLoading(false);
     });
-    return () => {stopRequests(); stopLegacy();};
+    const stopRecoveries = subscribeViewerRecoveryRequests(items => {
+      setRecoveryRequests(items);
+      setLoading(false);
+    }, issue => {
+      setError(issue.message);
+      setLoading(false);
+    });
+    return () => {stopRequests(); stopLegacy(); stopRecoveries();};
   }, []);
 
   const decide = async (item: ViewerAccessRequest, action: 'approved' | 'rejected' | 'revoked') => {
@@ -53,6 +66,17 @@ export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: 
       setWorkingUid('');
     }
   };
+  const decideRecovery = async (item: ViewerRecoveryRequest, action: 'restore' | 'rejected') => {
+    setWorkingUid(`recovery:${item.uid}`);
+    setError('');
+    try {
+      await decideViewerRecovery(item, action, ownerUid);
+    } catch (issue: any) {
+      setError(issue?.message || t('The recovery decision could not be saved.', 'மீட்பு முடிவைச் சேமிக்க முடியவில்லை.'));
+    } finally {
+      setWorkingUid('');
+    }
+  };
 
   return <View style={{backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12}}>
     <Text style={{fontSize: 17, fontWeight: '900', color: colors.ink}}>{t('Viewer access management', 'பார்வையாளர் அணுகல் நிர்வாகம்')}</Text>
@@ -61,7 +85,7 @@ export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: 
     </Text>
     {loading ? <ActivityIndicator color={colors.primary} style={{margin: 16}}/> : null}
     {error ? <Text accessibilityRole="alert" style={{fontSize: 12, color: colors.danger, marginTop: 10}}>{error}</Text> : null}
-    {!loading && requests.length === 0 && legacyViewers.length === 0 && !error ? <Text style={{fontSize: 12, color: colors.inkMuted, marginTop: 12}}>{t('No viewer access requests yet.', 'பார்வையாளர் அணுகல் கோரிக்கைகள் எதுவும் இல்லை.')}</Text> : null}
+    {!loading && requests.length === 0 && legacyViewers.length === 0 && recoveryRequests.length === 0 && !error ? <Text style={{fontSize: 12, color: colors.inkMuted, marginTop: 12}}>{t('No viewer access requests yet.', 'பார்வையாளர் அணுகல் கோரிக்கைகள் எதுவும் இல்லை.')}</Text> : null}
     {[...requests, ...legacyViewers.filter(item => !requests.some(request => request.uid === item.uid))].map(item => {
       const busy = workingUid === item.uid;
       const canDecide = item.status === 'pending';
@@ -99,5 +123,26 @@ export default function ViewerAccessManagement({ownerUid, language}: {ownerUid: 
         </View> : null}
       </View>;
     })}
+    {recoveryRequests.length ? <View style={{borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 14, marginTop: 14}}>
+      <Text style={{fontSize: 14, fontWeight: '900', color: colors.ink}}>{t('Secure sign-in recovery', 'பாதுகாப்பான உள்நுழைவு மீட்பு')}</Text>
+      <Text style={{fontSize: 11, lineHeight: 16, color: colors.inkMuted, marginTop: 5}}>
+        {t('Independently verify the member before restoring. This transfers the existing approval and revokes the previous session; it does not create a new approval.', 'மீட்டமைப்பதற்கு முன் உறுப்பினரின் அடையாளத்தைத் தனியாகச் சரிபார்க்கவும். இது ஏற்கனவே உள்ள அனுமதியை மாற்றி முந்தைய அமர்வை நீக்கும்; புதிய அனுமதி உருவாக்காது.')}
+      </Text>
+      {recoveryRequests.map(item => {
+        const busy = workingUid === `recovery:${item.uid}`;
+        return <View key={`recovery:${item.uid}`} style={{borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10, marginTop: 10}}>
+          <Text style={{fontSize: 12, fontWeight: '800', color: colors.ink}}>{item.normalizedMobileNumber}</Text>
+          <Text selectable style={{fontSize: 10, color: colors.inkMuted, marginTop: 3}}>{t('New session UID', 'புதிய அமர்வு UID')}: {item.uid} · {item.status.toUpperCase()}</Text>
+          {item.status === 'pending' ? <View style={{flexDirection: 'row', gap: 8, marginTop: 8}}>
+            <TouchableOpacity disabled={busy} onPress={() => void decideRecovery(item, 'restore')} style={{backgroundColor: colors.primary, borderRadius: 9, paddingVertical: 9, paddingHorizontal: 12, opacity: busy ? 0.6 : 1}}>
+              <Text style={{fontSize: 11, color: '#FFF', fontWeight: '800'}}>{busy ? t('Saving…', 'சேமிக்கிறது…') : t('Restore verified session', 'சரிபார்த்த அமர்வை மீட்டமை')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity disabled={busy} onPress={() => void decideRecovery(item, 'rejected')} style={{backgroundColor: colors.dangerSoft, borderRadius: 9, paddingVertical: 9, paddingHorizontal: 12, opacity: busy ? 0.6 : 1}}>
+              <Text style={{fontSize: 11, color: colors.danger, fontWeight: '800'}}>{t('Reject', 'நிராகரி')}</Text>
+            </TouchableOpacity>
+          </View> : null}
+        </View>;
+      })}
+    </View> : null}
   </View>;
 }

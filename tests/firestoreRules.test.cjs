@@ -169,12 +169,18 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
 
   const createViewer=async(uid,phone,preferredLanguage='en',provider='password')=>{
     const access=`projects/${project}/databases/(default)/documents/viewerAccess/${uid}`;
+    const phoneIndex=`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${phone}`;
+    const phoneStatus=`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${phone}`;
     return commit(uid,[
-      {update:{name:access,fields:{uid:stringValue(uid),fullName:stringValue('Family Viewer'),normalizedMobileNumber:stringValue(phone),status:stringValue('pending'),preferredLanguage:stringValue(preferredLanguage)}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}
+      {update:{name:access,fields:{uid:stringValue(uid),fullName:stringValue('Family Viewer'),normalizedMobileNumber:stringValue(phone),status:stringValue('pending'),preferredLanguage:stringValue(preferredLanguage)}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]},
+      {update:{name:phoneIndex,fields:{uid:stringValue(uid),status:stringValue('pending')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+      {update:{name:phoneStatus,fields:{status:stringValue('pending')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}
     ],undefined,provider);
   };
   const decideViewer=async(uid,phone,status)=>{
     const access=`projects/${project}/databases/(default)/documents/viewerAccess/${uid}`;
+    const phoneIndex=`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${phone}`;
+    const phoneStatus=`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${phone}`;
     const accessFields={status:stringValue(status),decidedBy:stringValue('owner'),decisionNote:stringValue('Owner decision')};
     const accessTransforms=[{fieldPath:'decisionAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}];
     if(status==='approved'){
@@ -186,12 +192,23 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
       accessTransforms.push({fieldPath:'revokedAt',setToServerValue:'REQUEST_TIME'});
     }
     return commit('owner',[
-      {update:{name:access,fields:accessFields},updateMask:{fieldPaths:Object.keys(accessFields)},updateTransforms:accessTransforms}
+      {update:{name:access,fields:accessFields},updateMask:{fieldPaths:Object.keys(accessFields)},updateTransforms:accessTransforms},
+      {update:{name:phoneIndex,fields:{uid:stringValue(uid),status:stringValue(status)}},updateMask:{fieldPaths:['uid','status']},updateTransforms:[{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+      {update:{name:phoneStatus,fields:{status:stringValue(status)}},updateMask:{fieldPaths:['status']},updateTransforms:[{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}
     ]);
   };
   const phone='+15551234567';
   const pendingRequest=await createViewer('password-viewer',phone,'ta');
   assert.equal(pendingRequest.status,200,await pendingRequest.text());
+  const duplicateRequest=await createViewer('duplicate-viewer',phone,'en');
+  assert.equal(duplicateRequest.status,403,'A second UID cannot create another request for an already indexed mobile number.');
+  assert.equal((await request('viewerAccess/duplicate-viewer','duplicate-viewer','GET',undefined,undefined,'password')).status,404,'The rejected duplicate write creates no registration.');
+  const simultaneousPhone='+15550004321';
+  const simultaneousRegistrations=await Promise.all([
+    createViewer('simultaneous-rule-a',simultaneousPhone),
+    createViewer('simultaneous-rule-b',simultaneousPhone)
+  ]);
+  assert.equal(simultaneousRegistrations.filter(result=>result.status===200).length,1,'Atomic phone indexes allow only one simultaneous registration.');
   assert.equal((await request('viewerAccess/password-viewer','password-viewer','GET',undefined,undefined,'password')).status,200,'A registrant may see their own pending request.');
   assert.equal((await request('projects/ksk/sheets/sheet1','password-viewer','GET',undefined,undefined,'password')).status,403,'Pending registrants cannot read project records.');
   assert.equal((await request('projects/ksk/bills/payment1/images/receipt1','password-viewer','GET',undefined,undefined,'password')).status,403,'Pending registrants cannot read attachments.');
@@ -258,7 +275,10 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal((await request('projects/ksk/approvals/approval1','password-viewer','GET',undefined,undefined,'password')).status,403,'Family viewers cannot read owner approval records.');
   assert.equal((await request('projects/ksk/reminders/reminder1','password-viewer','GET',undefined,undefined,'password')).status,403,'Family viewers cannot read owner-only reminders.');
   assert.equal((await request('users/password-viewer','password-viewer','PATCH',{fields:{role:stringValue('owner'),projectId:stringValue('ksk')}},undefined,'password')).status,403,'Family viewers cannot create or change role documents.');
-  assert.equal((await request(`viewerPhoneIndex/${encodeURIComponent('+15550000000')}`,'password-viewer','GET',undefined,undefined,'password')).status,403,'Viewers cannot read private phone indexes.');
+  assert.equal((await request(`viewerPhoneIndex/+15550000000`,'different-user','GET',undefined,undefined,'password')).status,403,'Viewers cannot read another member private phone index.');
+  const phoneStatusLookup=await request(`viewerPhoneStatus/${phone}`,'different-user','GET',undefined,undefined,'password');
+  assert.equal(phoneStatusLookup.status,200,'A sign-in lookup may read only the indexed approval status.');
+  assert.equal((await phoneStatusLookup.json()).fields.uid,undefined,'Phone lookups do not expose another member UID.');
   const viewerUpload=await request('projects/ksk/bills/payment1/images?documentId=viewer-upload','password-viewer','POST',{fields:{recordId:stringValue('payment1'),imageBase64:stringValue('YWJj'),fileName:stringValue('receipt.jpg'),mimeType:stringValue('image/jpeg'),createdBy:stringValue('owner'),createdAt:{timestampValue:new Date().toISOString()}}},undefined,'password');
   assert.equal(viewerUpload.status,403,'Approved viewers cannot upload attachments.');
   const viewerRequestList=await fetch(`${root}:runQuery`,{method:'POST',headers:{Authorization:`Bearer ${token('password-viewer',undefined,'password')}`,'Content-Type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'viewerAccess'}]}})});
@@ -268,6 +288,29 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const changedLanguage=await request('viewerAccess/password-viewer','password-viewer','GET',undefined,undefined,'password');
   assert.equal((await changedLanguage.json()).fields.preferredLanguage.stringValue,'en','A changed language preference remains saved.');
   assert.equal((await fetch(`${root}:runQuery`,{method:'POST',headers:{Authorization:`Bearer ${token('password-viewer',undefined,'password')}`,'Content-Type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'users'}],where:{fieldFilter:{field:{fieldPath:'projectId'},op:'EQUAL',value:stringValue('ksk')}}}})})).status,403,'Viewers cannot list membership or owner information.');
+
+  const recoveryPhone='+15550004567';
+  assert.equal((await createViewer('recovery-old',recoveryPhone,'ta','anonymous')).status,200,'A new family member can create one pending registration.');
+  assert.equal((await decideViewer('recovery-old',recoveryPhone,'approved')).status,200,'Owner approval updates both private identity and status indexes.');
+  const recoveryCreate=await commit('recovery-new',[{update:{name:`projects/${project}/databases/(default)/documents/viewerRecoveryRequests/recovery-new`,fields:{uid:stringValue('recovery-new'),normalizedMobileNumber:stringValue(recoveryPhone),status:stringValue('pending')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}],undefined,'password');
+  assert.equal(recoveryCreate.status,200,await recoveryCreate.text(),'A new session can request recovery but receives no project access.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','recovery-new','GET',undefined,undefined,'password')).status,403);
+  const oldRecoveryAccess=await (await request('viewerAccess/recovery-old','owner')).json();
+  const recoveryPath=`projects/${project}/databases/(default)/documents/viewerRecoveryRequests/recovery-new`;
+  const recoveryIndexPath=`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${recoveryPhone}`;
+  const recoveryStatusPath=`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${recoveryPhone}`;
+  const oldAccessPath=`projects/${project}/databases/(default)/documents/viewerAccess/recovery-old`;
+  const newAccessPath=`projects/${project}/databases/(default)/documents/viewerAccess/recovery-new`;
+  const transfer=await commit('owner',[
+    {update:{name:oldAccessPath,fields:{status:stringValue('revoked'),decidedBy:stringValue('owner'),decisionNote:stringValue('Owner verified session recovery.'),revokedBy:stringValue('owner')}},updateMask:{fieldPaths:['status','decidedBy','decisionNote','revokedBy','decisionAt','revokedAt','updatedAt']},updateTransforms:[{fieldPath:'decisionAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'revokedAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:newAccessPath,fields:{uid:stringValue('recovery-new'),fullName:oldRecoveryAccess.fields.fullName,normalizedMobileNumber:stringValue(recoveryPhone),status:stringValue('approved'),preferredLanguage:oldRecoveryAccess.fields.preferredLanguage,approvalDate:oldRecoveryAccess.fields.approvalDate,approverUid:oldRecoveryAccess.fields.approverUid}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:recoveryIndexPath,fields:{uid:stringValue('recovery-new'),status:stringValue('approved')}},updateMask:{fieldPaths:['uid','status']},updateTransforms:[{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:recoveryStatusPath,fields:{status:stringValue('approved')}},updateMask:{fieldPaths:['status']},updateTransforms:[{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:recoveryPath,fields:{status:stringValue('restored'),decidedBy:stringValue('owner')}},updateMask:{fieldPaths:['status','decidedBy','decisionAt','updatedAt']},updateTransforms:[{fieldPath:'decisionAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}
+  ]);
+  assert.equal(transfer.status,200,await transfer.text(),'Only the owner can atomically transfer the existing approval.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','recovery-new','GET',undefined,undefined,'password')).status,200,'The verified replacement session receives the existing approved access.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','recovery-old','GET',undefined,undefined,'anonymous')).status,403,'The previous session loses access in the same transfer.');
 
   const revoked=await decideViewer('password-viewer',phone,'revoked');
   assert.equal(revoked.status,200,await revoked.text());

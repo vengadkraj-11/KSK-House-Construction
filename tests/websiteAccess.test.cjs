@@ -43,20 +43,26 @@ test('owner login keeps email/password authentication and the owner membership g
   assert.match(app, /if \(role === 'owner'\) setScreen\('Settings'\)/);
 });
 
-test('signed-out website opens the minimal family request form with a discreet owner link', () => {
+test('signed-out website offers separate sign-in and sign-up with a discreet owner link', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'App.tsx'), 'utf8');
   const viewer = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'FamilyViewer.tsx'), 'utf8');
   assert.doesNotMatch(app, /function WebsiteAccessScreen/);
   assert.match(app, /webEntry === 'choices'/);
   assert.match(app, /if \(webEntry === 'choices'\) return <FamilyViewer/);
+  assert.match(viewer, /function AccessHome/);
+  assert.match(viewer, /label=\{text\(language, 'Sign In'\)\}/);
+  assert.match(viewer, /label=\{text\(language, 'Sign Up'\)/);
   assert.match(viewer, /function AccessHeader/);
   assert.match(viewer, /text\(language, 'Owner Login'\)/);
+  assert.match(viewer, /mode === 'sign-up'/);
   assert.match(viewer, /TextInput value=\{fullName\}/);
   assert.match(viewer, /TextInput value=\{phone\}/);
   assert.doesNotMatch(viewer, /TextInput value=\{email\}/);
   assert.doesNotMatch(viewer, /TextInput value=\{password\}/);
   assert.match(viewer, /signInAnonymously\(auth\)/);
   assert.match(viewer, /setPersistence\(browserAuth, browserLocalPersistence\)/);
-  assert.match(viewer, /canContinueWithApprovedSession\(user\.uid, request, phone\)/);
-  assert.match(viewer, /Your access request is awaiting owner approval\./);
+  assert.match(viewer, /canContinueWithApprovedSession\(requester\.uid, result\.request, normalizedPhone\)/);
+  assert.match(viewer, /Your registration is awaiting owner approval\./);
+  assert.match(viewer, /lookupViewerAccessByPhone\(requester\.uid, normalizedPhone\)/);
+  assert.match(viewer, /requestViewerRecovery\(requester\.uid, normalizedPhone\)/);
 });

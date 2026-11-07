@@ -14,6 +14,15 @@ service cloud.firestore {
     function viewerAccessPath(uid) {
       return /databases/$(database)/documents/viewerAccess/$(uid);
     }
+    function viewerPhoneIndexPath(phone) {
+      return /databases/$(database)/documents/viewerPhoneIndex/$(phone);
+    }
+    function viewerPhoneStatusPath(phone) {
+      return /databases/$(database)/documents/viewerPhoneStatus/$(phone);
+    }
+    function viewerRecoveryPath(uid) {
+      return /databases/$(database)/documents/viewerRecoveryRequests/$(uid);
+    }
     function hasVerifiedPhone() {
       return signedIn()
         && request.auth.token.firebase.sign_in_provider == 'phone'
@@ -63,6 +72,7 @@ service cloud.firestore {
     function validViewerRequestCreate(uid) {
       let data = request.resource.data;
       let phone = data.get('normalizedMobileNumber', '');
+      let indexPath = viewerPhoneIndexPath(phone);
       return hasFamilyAuth()
         && uid == request.auth.uid
         && data.keys().hasAll(['uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage', 'registeredAt', 'createdAt'])
@@ -75,7 +85,13 @@ service cloud.firestore {
         && data.status == 'pending'
         && data.preferredLanguage in ['en', 'ta']
         && data.registeredAt == request.time
-        && data.createdAt == request.time;
+        && data.createdAt == request.time
+        && !exists(indexPath)
+        && existsAfter(indexPath)
+        && getAfter(indexPath).data.get('uid', null) == uid
+        && getAfter(indexPath).data.get('status', null) == 'pending'
+        && existsAfter(viewerPhoneStatusPath(phone))
+        && getAfter(viewerPhoneStatusPath(phone)).data.get('status', null) == 'pending';
     }
     function validViewerDecision(uid) {
       let before = resource.data;
@@ -102,7 +118,220 @@ service cloud.firestore {
         && after.get('decisionNote', '') is string
         && after.get('decisionNote', '').size() <= 500
         && after.get('updatedAt', null) == request.time
+        && existsAfter(viewerPhoneIndexPath(before.get('normalizedMobileNumber', '')))
+        && getAfter(viewerPhoneIndexPath(before.get('normalizedMobileNumber', ''))).data.get('uid', null) == uid
+        && getAfter(viewerPhoneIndexPath(before.get('normalizedMobileNumber', ''))).data.get('status', null) == after.get('status', null)
+        && existsAfter(viewerPhoneStatusPath(before.get('normalizedMobileNumber', '')))
+        && getAfter(viewerPhoneStatusPath(before.get('normalizedMobileNumber', ''))).data.get('status', null) == after.get('status', null)
         && (approving || rejecting || revoking);
+    }
+    function validViewerPhoneIndexCreate(phone) {
+      let data = request.resource.data;
+      let memberPath = viewerAccessPath(data.get('uid', ''));
+      let familyCreate = hasFamilyAuth()
+        && data.get('uid', null) == request.auth.uid
+        && existsAfter(memberPath)
+        && getAfter(memberPath).data.get('uid', null) == data.get('uid', null)
+        && getAfter(memberPath).data.get('normalizedMobileNumber', null) == phone
+        && getAfter(memberPath).data.get('status', null) == data.get('status', null);
+      let ownerMigration = isOwner('ksk')
+        && existsAfter(memberPath)
+        && getAfter(memberPath).data.get('normalizedMobileNumber', null) == phone
+        && getAfter(memberPath).data.get('status', null) == data.get('status', null);
+      return phone.matches('^\\+[1-9][0-9]{7,14}$')
+        && data.keys().hasAll(['uid', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'status', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.status in ['pending', 'approved', 'rejected', 'revoked']
+        && data.createdAt == request.time
+        && data.updatedAt == request.time
+        && !exists(viewerPhoneIndexPath(phone))
+        && (familyCreate || ownerMigration);
+    }
+    function validViewerPhoneIndexUpdate(phone) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let sameMember = after.get('uid', null) == before.get('uid', null)
+        && existsAfter(viewerAccessPath(before.get('uid', '')))
+        && getAfter(viewerAccessPath(before.get('uid', ''))).data.get('normalizedMobileNumber', null) == phone
+        && getAfter(viewerAccessPath(before.get('uid', ''))).data.get('status', null) == after.get('status', null);
+      let recoveryTransfer = before.get('status', null) == 'approved'
+        && after.get('status', null) == 'approved'
+        && after.get('uid', null) != before.get('uid', null)
+        && existsAfter(viewerRecoveryPath(after.get('uid', '')))
+        && getAfter(viewerRecoveryPath(after.get('uid', ''))).data.get('status', null) == 'restored'
+        && getAfter(viewerRecoveryPath(after.get('uid', ''))).data.get('normalizedMobileNumber', null) == phone
+        && existsAfter(viewerAccessPath(after.get('uid', '')))
+        && getAfter(viewerAccessPath(after.get('uid', ''))).data.get('status', null) == 'approved'
+        && getAfter(viewerAccessPath(after.get('uid', ''))).data.get('normalizedMobileNumber', null) == phone
+        && existsAfter(viewerAccessPath(before.get('uid', '')))
+        && getAfter(viewerAccessPath(before.get('uid', ''))).data.get('status', null) == 'revoked'
+        && existsAfter(viewerPhoneStatusPath(phone))
+        && getAfter(viewerPhoneStatusPath(phone)).data.get('status', null) == 'approved';
+      return isOwner('ksk')
+        && phone.matches('^\\+[1-9][0-9]{7,14}$')
+        && after.keys().hasAll(['uid', 'status', 'createdAt', 'updatedAt'])
+        && after.keys().hasOnly(['uid', 'status', 'createdAt', 'updatedAt'])
+        && after.get('createdAt', null) == before.get('createdAt', null)
+        && after.get('updatedAt', null) == request.time
+        && existsAfter(viewerPhoneStatusPath(phone))
+        && getAfter(viewerPhoneStatusPath(phone)).data.get('status', null) == after.get('status', null)
+        && (sameMember || recoveryTransfer);
+    }
+    function validViewerPhoneStatusCreate(phone) {
+      let data = request.resource.data;
+      let indexPath = viewerPhoneIndexPath(phone);
+      let uid = getAfter(indexPath).data.get('uid', '');
+      let memberPath = viewerAccessPath(uid);
+      let ownerMigration = isOwner('ksk');
+      let familyCreate = hasFamilyAuth()
+        && uid == request.auth.uid
+        && data.get('status', null) == 'pending';
+      return phone.matches('^\\+[1-9][0-9]{7,14}$')
+        && data.keys().hasAll(['status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['status', 'createdAt', 'updatedAt'])
+        && data.get('status', null) in ['pending', 'approved', 'rejected', 'revoked']
+        && data.get('createdAt', null) == request.time
+        && data.get('updatedAt', null) == request.time
+        && !exists(viewerPhoneStatusPath(phone))
+        && existsAfter(indexPath)
+        && getAfter(indexPath).data.get('status', null) == data.get('status', null)
+        && existsAfter(memberPath)
+        && getAfter(memberPath).data.get('normalizedMobileNumber', null) == phone
+        && getAfter(memberPath).data.get('status', null) == data.get('status', null)
+        && (ownerMigration || familyCreate);
+    }
+    function validViewerPhoneStatusUpdate(phone) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let indexPath = viewerPhoneIndexPath(phone);
+      let uid = getAfter(indexPath).data.get('uid', '');
+      let memberPath = viewerAccessPath(uid);
+      return isOwner('ksk')
+        && phone.matches('^\\+[1-9][0-9]{7,14}$')
+        && after.keys().hasAll(['status', 'createdAt', 'updatedAt'])
+        && after.keys().hasOnly(['status', 'createdAt', 'updatedAt'])
+        && after.get('status', null) in ['pending', 'approved', 'rejected', 'revoked']
+        && after.get('createdAt', null) == before.get('createdAt', null)
+        && after.get('updatedAt', null) == request.time
+        && existsAfter(indexPath)
+        && getAfter(indexPath).data.get('status', null) == after.get('status', null)
+        && existsAfter(memberPath)
+        && getAfter(memberPath).data.get('normalizedMobileNumber', null) == phone
+        && getAfter(memberPath).data.get('status', null) == after.get('status', null);
+    }
+    function validViewerRecoveryCreate(uid) {
+      let data = request.resource.data;
+      let phone = data.get('normalizedMobileNumber', '');
+      let indexPath = viewerPhoneIndexPath(phone);
+      return hasFamilyAuth()
+        && uid == request.auth.uid
+        && data.keys().hasAll(['uid', 'normalizedMobileNumber', 'status', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'normalizedMobileNumber', 'status', 'createdAt'])
+        && data.uid == uid
+        && phone.matches('^\\+[1-9][0-9]{7,14}$')
+        && data.status == 'pending'
+        && data.createdAt == request.time
+        && !exists(viewerAccessPath(uid))
+        && exists(indexPath)
+        && get(indexPath).data.get('uid', null) != uid
+        && get(indexPath).data.get('status', null) == 'approved'
+        && exists(viewerPhoneStatusPath(phone))
+        && get(viewerPhoneStatusPath(phone)).data.get('status', null) == 'approved';
+    }
+    function validViewerRecoveryDecision(uid) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let phone = before.get('normalizedMobileNumber', '');
+      let indexPath = viewerPhoneIndexPath(phone);
+      let newAccessPath = viewerAccessPath(uid);
+      let restoring = before.get('status', null) == 'pending'
+        && after.get('status', null) == 'restored'
+        && existsAfter(indexPath)
+        && getAfter(indexPath).data.get('uid', null) == uid
+        && getAfter(indexPath).data.get('status', null) == 'approved'
+        && existsAfter(viewerPhoneStatusPath(phone))
+        && getAfter(viewerPhoneStatusPath(phone)).data.get('status', null) == 'approved'
+        && existsAfter(newAccessPath)
+        && getAfter(newAccessPath).data.get('status', null) == 'approved'
+        && getAfter(newAccessPath).data.get('normalizedMobileNumber', null) == phone;
+      let rejecting = before.get('status', null) == 'pending'
+        && after.get('status', null) == 'rejected';
+      return isOwner('ksk')
+        && before.get('uid', null) == uid
+        && after.get('uid', null) == uid
+        && after.get('normalizedMobileNumber', null) == phone
+        && after.diff(before).affectedKeys().hasOnly(['status', 'decidedBy', 'decisionAt', 'updatedAt'])
+        && after.get('decidedBy', null) == request.auth.uid
+        && after.get('decisionAt', null) == request.time
+        && after.get('updatedAt', null) == request.time
+        && (restoring || rejecting);
+    }
+    function validRecoveryViewerCreate(uid) {
+      let recoveryPath = viewerRecoveryPath(uid);
+      let recovery = getAfter(recoveryPath).data;
+      let phone = recovery.get('normalizedMobileNumber', '');
+      let indexPath = viewerPhoneIndexPath(phone);
+      let oldUid = get(indexPath).data.get('uid', '');
+      let oldAccessPath = viewerAccessPath(oldUid);
+      let data = request.resource.data;
+      return isOwner('ksk')
+        && existsAfter(recoveryPath)
+        && recovery.get('uid', null) == uid
+        && recovery.get('status', null) == 'restored'
+        && recovery.get('decidedBy', null) == request.auth.uid
+        && exists(indexPath)
+        && get(indexPath).data.get('status', null) == 'approved'
+        && oldUid != uid
+        && existsAfter(indexPath)
+        && getAfter(indexPath).data.get('uid', null) == uid
+        && getAfter(indexPath).data.get('status', null) == 'approved'
+        && existsAfter(oldAccessPath)
+        && getAfter(oldAccessPath).data.get('status', null) == 'revoked'
+        && data.keys().hasAll(['uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'])
+        && data.keys().hasOnly(['uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'])
+        && data.get('uid', null) == uid
+        && data.get('fullName', null) == get(oldAccessPath).data.get('fullName', null)
+        && data.get('normalizedMobileNumber', null) == phone
+        && data.get('status', null) == 'approved'
+        && data.get('preferredLanguage', null) == get(oldAccessPath).data.get('preferredLanguage', null)
+        && data.get('approvalDate', null) == get(oldAccessPath).data.get('approvalDate', null)
+        && data.get('approverUid', null) == get(oldAccessPath).data.get('approverUid', null)
+        && data.get('registeredAt', null) == request.time
+        && data.get('createdAt', null) == request.time;
+    }
+    function validRecoveryTransferRevoke(uid) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let phone = before.get('normalizedMobileNumber', '');
+      let indexPath = viewerPhoneIndexPath(phone);
+      let newUid = getAfter(indexPath).data.get('uid', '');
+      let recoveryPath = viewerRecoveryPath(newUid);
+      let newAccessPath = viewerAccessPath(newUid);
+      return isOwner('ksk')
+        && before.get('status', null) == 'approved'
+        && before.get('uid', null) == uid
+        && after.get('status', null) == 'revoked'
+        && after.diff(before).affectedKeys().hasOnly([
+          'status', 'decisionAt', 'decidedBy', 'decisionNote', 'revokedAt', 'revokedBy', 'updatedAt'
+        ])
+        && after.get('decisionAt', null) == request.time
+        && after.get('decidedBy', null) == request.auth.uid
+        && after.get('decisionNote', '') is string
+        && after.get('decisionNote', '') is string
+        && after.get('decisionNote', '').size() <= 500
+        && after.get('revokedAt', null) == request.time
+        && after.get('revokedBy', null) == request.auth.uid
+        && after.get('updatedAt', null) == request.time
+        && existsAfter(indexPath)
+        && newUid != uid
+        && getAfter(indexPath).data.get('status', null) == 'approved'
+        && existsAfter(newAccessPath)
+        && getAfter(newAccessPath).data.get('normalizedMobileNumber', null) == phone
+        && getAfter(newAccessPath).data.get('status', null) == 'approved'
+        && existsAfter(recoveryPath)
+        && getAfter(recoveryPath).data.get('status', null) == 'restored'
+        && getAfter(recoveryPath).data.get('normalizedMobileNumber', null) == phone;
     }
     function validLegacyRevocation(uid) {
       let memberPath = /databases/$(database)/documents/users/$(uid);
@@ -181,7 +410,7 @@ service cloud.firestore {
     match /viewerAccess/{uid} {
       allow get: if signedIn() && (request.auth.uid == uid || isOwner('ksk'));
       allow list: if isOwner('ksk');
-      allow create: if validViewerRequestCreate(uid) || validLegacyRevocation(uid);
+      allow create: if validViewerRequestCreate(uid) || validLegacyRevocation(uid) || validRecoveryViewerCreate(uid);
       allow update: if (signedIn()
           && request.auth.uid == uid
           && resource.data.get('uid', null) == uid
@@ -192,33 +421,32 @@ service cloud.firestore {
           && request.resource.data.get('preferredLanguage', null) in ['en', 'ta']
           && request.resource.data.get('updatedAt', null) == request.time
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['preferredLanguage', 'updatedAt']))
-        || validViewerDecision(uid);
+        || validViewerDecision(uid)
+        || validRecoveryTransferRevoke(uid);
       allow delete: if false;
     }
 
     match /viewerPhoneIndex/{phone} {
-      allow get: if isOwner('ksk') || (hasVerifiedPhone() && request.auth.token.get('phone_number', '') == phone);
+      allow get: if isOwner('ksk') || (signedIn() && resource.data.get('uid', null) == request.auth.uid);
       allow list: if isOwner('ksk');
-      allow create: if hasVerifiedPhone()
-        && request.auth.token.get('phone_number', '') == phone
-        && phone.matches('^\\+[1-9][0-9]{7,14}$')
-        && request.resource.data.keys().hasAll(['uid', 'normalizedMobileNumber', 'status', 'createdAt'])
-        && request.resource.data.keys().hasOnly(['uid', 'normalizedMobileNumber', 'status', 'createdAt'])
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.normalizedMobileNumber == phone
-        && request.resource.data.status == 'pending'
-        && request.resource.data.createdAt == request.time
-        && existsAfter(viewerAccessPath(request.auth.uid))
-        && getAfter(viewerAccessPath(request.auth.uid)).data.get('normalizedMobileNumber', null) == phone
-        && getAfter(viewerAccessPath(request.auth.uid)).data.get('status', null) == 'pending';
-      allow update: if isOwner('ksk')
-        && request.resource.data.get('uid', null) == resource.data.get('uid', null)
-        && request.resource.data.get('normalizedMobileNumber', null) == phone
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
-        && request.resource.data.get('updatedAt', null) == request.time
-        && request.resource.data.get('status', null) in ['approved', 'rejected', 'revoked']
-        && existsAfter(viewerAccessPath(resource.data.get('uid', '')))
-        && getAfter(viewerAccessPath(resource.data.get('uid', ''))).data.get('status', null) == request.resource.data.get('status', null);
+      allow create: if validViewerPhoneIndexCreate(phone);
+      allow update: if validViewerPhoneIndexUpdate(phone);
+      allow delete: if false;
+    }
+
+    match /viewerPhoneStatus/{phone} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if validViewerPhoneStatusCreate(phone);
+      allow update: if validViewerPhoneStatusUpdate(phone);
+      allow delete: if false;
+    }
+
+    match /viewerRecoveryRequests/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isOwner('ksk'));
+      allow list: if isOwner('ksk');
+      allow create: if validViewerRecoveryCreate(uid);
+      allow update: if validViewerRecoveryDecision(uid);
       allow delete: if false;
     }
 
