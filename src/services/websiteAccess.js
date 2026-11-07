@@ -8,6 +8,13 @@ function shouldRenderFamilyViewer(pathname, role, authenticated = false) {
     (authenticated && role !== 'owner');
 }
 
+function resolveProjectRole(membership, viewerAccess, accessExists = true, authenticatedUid = '') {
+  if (membership?.projectId === 'ksk' && membership?.role === 'owner') return 'owner';
+  if (viewerAccess?.uid === authenticatedUid && viewerAccess?.status === 'approved' && viewerAccess?.approvalDate) return 'viewer';
+  if (!accessExists && membership?.projectId === 'ksk' && membership?.role === 'viewer') return 'viewer';
+  return null;
+}
+
 function getPreferredLanguage(storage, legacyKey = LEGACY_LANGUAGE_KEY) {
   try {
     const saved = storage.getItem(LANGUAGE_KEY) || storage.getItem(legacyKey);
@@ -27,6 +34,7 @@ function savePreferredLanguage(storage, language) {
 
 module.exports = {
   getPreferredLanguage,
+  resolveProjectRole,
   savePreferredLanguage,
   shouldRenderFamilyViewer
 };

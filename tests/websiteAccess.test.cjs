@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   getPreferredLanguage,
+  resolveProjectRole,
   savePreferredLanguage,
   shouldRenderFamilyViewer
 } = require('../src/services/websiteAccess.js');
@@ -35,11 +36,21 @@ test('preferred language persists across owner and family website visits', () =>
   assert.throws(() => savePreferredLanguage(storage, 'fr'), /Choose English or Tamil/);
 });
 
+test('approved viewer UID resolves to viewer role and revoked access never falls back to legacy membership', () => {
+  assert.equal(resolveProjectRole(null, {uid: 'viewer-uid', status: 'approved', approvalDate: 'approval'}, true, 'viewer-uid'), 'viewer');
+  assert.equal(resolveProjectRole(null, {uid: 'other-uid', status: 'approved', approvalDate: 'approval'}, true, 'viewer-uid'), null);
+  assert.equal(resolveProjectRole(null, {uid: 'viewer-uid', status: 'approved'}, true, 'viewer-uid'), null);
+  assert.equal(resolveProjectRole({projectId: 'ksk', role: 'viewer'}, null, false, 'viewer-uid'), 'viewer');
+  assert.equal(resolveProjectRole({projectId: 'ksk', role: 'viewer'}, {uid: 'viewer-uid', status: 'revoked'}, true, 'viewer-uid'), null);
+  assert.equal(resolveProjectRole({projectId: 'ksk', role: 'owner'}, {uid: 'owner', status: 'revoked'}, true, 'owner'), 'owner');
+  assert.equal(resolveProjectRole({projectId: 'other', role: 'owner'}, null, false, 'owner'), null);
+});
+
 test('owner login keeps email/password authentication and the owner membership gate', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'App.tsx'), 'utf8');
   assert.match(app, /await signInWithEmailAndPassword\(auth, email, password\)/);
-  assert.match(app, /membership\?\.projectId === 'ksk'/);
-  assert.match(app, /assigned === 'owner' \|\| assigned === 'viewer'/);
+  assert.match(app, /resolveProjectRole\(membership, access, accessExists, user\.uid\)/);
+  assert.match(app, /onSnapshot\(doc\(db, 'viewerAccess', user\.uid\)/);
   assert.match(app, /if \(role === 'owner'\) setScreen\('Settings'\)/);
 });
 
@@ -65,4 +76,7 @@ test('signed-out website offers separate sign-in and sign-up with a discreet own
   assert.match(viewer, /Your registration is awaiting owner approval\./);
   assert.match(viewer, /lookupViewerAccessByPhone\(requester\.uid, normalizedPhone\)/);
   assert.match(viewer, /requestViewerRecovery\(requester\.uid, normalizedPhone\)/);
+  assert.match(viewer, /setMobileConfirmed\(request\?\.status === 'approved'\)/);
+  assert.doesNotMatch(viewer, /setMobileConfirmed\(false\);\s*\},\s*\[user\?\.uid,\s*access\?\.status/);
+  assert.match(viewer, /if \(recovery\.status === 'pending'\) setMessage/);
 });

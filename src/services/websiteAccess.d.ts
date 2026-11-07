@@ -5,6 +5,13 @@ export function getPreferredLanguage(
   legacyKey?: string
 ): PreferredLanguage | null;
 
+export function resolveProjectRole(
+  membership: {projectId?: string; role?: string} | null | undefined,
+  viewerAccess: {uid?: string; status?: string; approvalDate?: unknown} | null | undefined,
+  accessExists: boolean,
+  authenticatedUid: string
+): 'owner' | 'viewer' | null;
+
 export function savePreferredLanguage(
   storage: Pick<Storage, 'setItem'>,
   language: PreferredLanguage

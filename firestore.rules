@@ -23,6 +23,21 @@ service cloud.firestore {
     function viewerRecoveryPath(uid) {
       return /databases/$(database)/documents/viewerRecoveryRequests/$(uid);
     }
+    function viewerAccountDeletionPath(uid) {
+      return /databases/$(database)/documents/viewerAccountDeletions/$(uid);
+    }
+    function validViewerAccountDeletion(uid) {
+      let accessPath = viewerAccessPath(uid);
+      let memberPath = /databases/$(database)/documents/users/$(uid);
+      return isOwner('ksk')
+        && uid != request.auth.uid
+        && ((exists(accessPath)
+            && get(accessPath).data.get('uid', null) == uid
+            && get(accessPath).data.get('status', null) in ['pending', 'approved', 'rejected', 'revoked'])
+          || (exists(memberPath)
+            && get(memberPath).data.get('projectId', null) == 'ksk'
+            && get(memberPath).data.get('role', null) == 'viewer'));
+    }
     function hasVerifiedPhone() {
       return signedIn()
         && request.auth.token.firebase.sign_in_provider == 'phone'
@@ -86,12 +101,60 @@ service cloud.firestore {
         && data.preferredLanguage in ['en', 'ta']
         && data.registeredAt == request.time
         && data.createdAt == request.time
+        && !exists(viewerAccountDeletionPath(uid))
         && !exists(indexPath)
         && existsAfter(indexPath)
         && getAfter(indexPath).data.get('uid', null) == uid
         && getAfter(indexPath).data.get('status', null) == 'pending'
         && existsAfter(viewerPhoneStatusPath(phone))
         && getAfter(viewerPhoneStatusPath(phone)).data.get('status', null) == 'pending';
+    }
+    function validViewerHistoryCreate(uid) {
+      let data = request.resource.data;
+      let phone = data.get('normalizedMobileNumber', '');
+      let requestPath = viewerAccessPath(uid);
+      let recoveryRequestPath = viewerRecoveryPath(uid);
+      let registration = data.get('action', null) == 'registered'
+        && data.get('status', null) == 'pending'
+        && existsAfter(requestPath)
+        && getAfter(requestPath).data.get('fullName', null) == data.get('fullName', null)
+        && getAfter(requestPath).data.get('normalizedMobileNumber', null) == phone
+        && getAfter(requestPath).data.get('status', null) == 'pending';
+      let recovery = data.get('action', null) == 'recovery_requested'
+        && data.get('status', null) == 'pending'
+        && existsAfter(recoveryRequestPath)
+        && getAfter(recoveryRequestPath).data.get('normalizedMobileNumber', null) == phone
+        && getAfter(recoveryRequestPath).data.get('status', null) == 'pending';
+      return hasFamilyAuth()
+        && uid == request.auth.uid
+        && data.keys().hasAll(['uid', 'fullName', 'normalizedMobileNumber', 'action', 'status', 'actorUid', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'fullName', 'normalizedMobileNumber', 'action', 'status', 'actorUid', 'createdAt'])
+        && data.get('uid', null) == uid
+        && data.get('actorUid', null) == uid
+        && data.get('fullName', null) is string
+        && phone.matches('^\\+[1-9][0-9]{7,14}$')
+        && data.get('createdAt', null) == request.time
+        && (registration || recovery);
+    }
+    function validOwnerViewerHistoryCreate() {
+      let data = request.resource.data;
+      return isOwner('ksk')
+        && data.keys().hasAll(['uid', 'fullName', 'normalizedMobileNumber', 'action', 'status', 'actorUid', 'createdAt'])
+        && data.keys().hasOnly([
+          'uid', 'fullName', 'normalizedMobileNumber', 'action', 'status',
+          'previousStatus', 'actorUid', 'createdAt'
+        ])
+        && data.get('uid', null) is string
+        && data.get('fullName', null) is string
+        && data.get('normalizedMobileNumber', null) is string
+        && data.get('action', null) in [
+          'approved', 'rejected', 'revoked', 'recovery_rejected',
+          'recovery_restored', 'history_cleared', 'account_deleted'
+        ]
+        && data.get('status', null) is string
+        && data.get('actorUid', null) == request.auth.uid
+        && data.get('createdAt', null) == request.time
+        && (!data.keys().hasAny(['previousStatus']) || data.get('previousStatus', null) is string);
     }
     function validViewerDecision(uid) {
       let before = resource.data;
@@ -390,7 +453,7 @@ service cloud.firestore {
 
     // Role documents are provisioned by the project administrator only.
     match /users/{userId} {
-      allow get: if signedIn() && request.auth.uid == userId;
+      allow get: if signedIn() && (request.auth.uid == userId || isOwner('ksk'));
       allow list: if isOwner('ksk')
         && resource.data.get('projectId', null) == 'ksk'
         && resource.data.get('role', null) == 'viewer';
@@ -401,9 +464,22 @@ service cloud.firestore {
         && request.resource.data.get('preferredLanguage', null) in ['en', 'ta']
         && request.resource.data.get('updatedAt', null) == request.time
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['preferredLanguage', 'updatedAt']);
-      allow create, delete: if false;
+      allow create: if false;
+      allow delete: if isOwner('ksk')
+        && resource.data.get('projectId', null) == 'ksk'
+        && resource.data.get('role', null) == 'viewer'
+        && existsAfter(viewerAccountDeletionPath(userId))
+        && getAfter(viewerAccountDeletionPath(userId)).data.get('actorUid', null) == request.auth.uid;
       match /devices/{deviceId} {
-        allow read, create, update, delete: if signedIn() && request.auth.uid == userId;
+        allow read: if isOwner('ksk')
+          || (signedIn() && request.auth.uid == userId && hasProjectAccess('ksk'));
+        allow create, update: if signedIn()
+          && request.auth.uid == userId
+          && hasProjectAccess('ksk');
+        allow delete: if isOwner('ksk')
+          || (signedIn()
+            && request.auth.uid == userId
+            && hasProjectAccess('ksk'));
       }
     }
 
@@ -424,7 +500,9 @@ service cloud.firestore {
         || validViewerDecision(uid)
         || validRecoveryTransferRevoke(uid);
       allow delete: if isOwner('ksk')
-        && resource.data.get('status', null) in ['pending', 'rejected'];
+        && (resource.data.get('status', null) in ['pending', 'rejected']
+          || (existsAfter(viewerAccountDeletionPath(uid))
+            && getAfter(viewerAccountDeletionPath(uid)).data.get('actorUid', null) == request.auth.uid));
     }
 
     match /viewerPhoneIndex/{phone} {
@@ -433,16 +511,26 @@ service cloud.firestore {
       allow create: if validViewerPhoneIndexCreate(phone);
       allow update: if validViewerPhoneIndexUpdate(phone);
       allow delete: if isOwner('ksk')
-        && resource.data.get('status', null) in ['pending', 'rejected'];
+        && (resource.data.get('status', null) in ['pending', 'rejected']
+          || (!existsAfter(viewerAccessPath(resource.data.get('uid', '')))
+            && existsAfter(viewerAccountDeletionPath(resource.data.get('uid', '')))
+            && getAfter(viewerAccountDeletionPath(resource.data.get('uid', ''))).data.get('actorUid', null) == request.auth.uid));
     }
 
     match /viewerPhoneStatus/{phone} {
-      allow get: if signedIn();
+      allow get: if isOwner('ksk')
+        || (signedIn()
+          && exists(viewerPhoneIndexPath(phone))
+          && get(viewerPhoneIndexPath(phone)).data.get('uid', null) == request.auth.uid);
       allow list: if false;
       allow create: if validViewerPhoneStatusCreate(phone);
       allow update: if validViewerPhoneStatusUpdate(phone);
       allow delete: if isOwner('ksk')
-        && resource.data.get('status', null) in ['pending', 'rejected'];
+        && (resource.data.get('status', null) in ['pending', 'rejected']
+          || (!existsAfter(viewerPhoneIndexPath(phone))
+            && exists(viewerPhoneIndexPath(phone))
+            && existsAfter(viewerAccountDeletionPath(get(viewerPhoneIndexPath(phone)).data.get('uid', '')))
+            && getAfter(viewerAccountDeletionPath(get(viewerPhoneIndexPath(phone)).data.get('uid', ''))).data.get('actorUid', null) == request.auth.uid));
     }
 
     match /viewerRecoveryRequests/{uid} {
@@ -452,6 +540,26 @@ service cloud.firestore {
       allow update: if validViewerRecoveryDecision(uid);
       allow delete: if isOwner('ksk')
         && resource.data.get('status', null) in ['pending', 'rejected', 'restored'];
+    }
+
+    match /viewerAccessHistory/{eventId} {
+      allow read: if isOwner('ksk');
+      allow create: if validOwnerViewerHistoryCreate()
+        || validViewerHistoryCreate(request.resource.data.get('uid', ''));
+      allow update: if false;
+      allow delete: if isOwner('ksk');
+    }
+
+    match /viewerAccountDeletions/{uid} {
+      allow get, list: if isOwner('ksk');
+      allow create: if validViewerAccountDeletion(uid)
+        && request.resource.data.keys().hasAll(['uid', 'actorUid', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['uid', 'actorUid', 'createdAt'])
+        && request.resource.data.get('uid', null) == uid
+        && request.resource.data.get('actorUid', null) == request.auth.uid
+        && request.resource.data.get('createdAt', null) == request.time
+        && !exists(viewerAccountDeletionPath(uid));
+      allow update, delete: if false;
     }
 
     match /projects/{projectId}/sheets/{sheetId} {
@@ -581,23 +689,27 @@ service cloud.firestore {
       allow update, delete: if isOwner(projectId);
     }
 
-    // Login sessions: each member can create and update only their own
-    // session's last-active timestamp. Owners can review project-wide history.
+    // Login sessions: members can manage only their own activity; owners can
+    // review, revoke, and clear project-wide session history.
     match /projects/{projectId}/login_history/{sessionId} {
-      allow read: if isOwner(projectId);
-      allow create: if isOwner(projectId)
+      allow read: if isOwner(projectId)
+        || (signedIn()
+          && resource.data.get('userId', null) == request.auth.uid
+          && hasProjectAccess(projectId));
+      allow create: if (isOwner(projectId) || hasApprovedViewerAccess(projectId) || hasLegacyProjectAccess(projectId))
         && request.resource.data.keys().hasAll([
           'userId', 'email', 'displayName', 'role', 'installationId',
-          'deviceModel', 'deviceManufacturer', 'deviceName', 'platform',
+          'deviceModel', 'deviceManufacturer', 'deviceName', 'platform', 'status',
           'loginAt', 'lastActiveAt'
         ])
         && request.resource.data.keys().hasOnly([
           'userId', 'email', 'displayName', 'role', 'installationId',
-          'deviceModel', 'deviceManufacturer', 'deviceName', 'platform',
+          'deviceModel', 'deviceManufacturer', 'deviceName', 'platform', 'status',
           'loginAt', 'lastActiveAt'
         ])
         && request.resource.data.userId == request.auth.uid
-        && request.resource.data.role == memberRole(projectId)
+        && request.resource.data.role == (isOwner(projectId) ? 'owner' : 'viewer')
+        && request.resource.data.status == 'active'
         && request.resource.data.loginAt == request.time
         && request.resource.data.lastActiveAt == request.time
         && request.resource.data.installationId is string
@@ -607,10 +719,24 @@ service cloud.firestore {
         && request.resource.data.deviceManufacturer is string
         && request.resource.data.deviceName is string
         && request.resource.data.platform is string;
-      allow update: if isOwner(projectId)
-        && resource.data.userId == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAt'])
-        && request.resource.data.lastActiveAt == request.time;
+      allow update: if (isOwner(projectId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'revokedAt', 'revokedBy'])
+          && request.resource.data.get('status', null) == 'revoked'
+          && request.resource.data.get('revokedAt', null) == request.time
+          && request.resource.data.get('revokedBy', null) == request.auth.uid)
+        || (signedIn()
+          && resource.data.get('userId', null) == request.auth.uid
+          && hasProjectAccess(projectId)
+          && resource.data.get('status', null) == 'active'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAt'])
+          && request.resource.data.lastActiveAt == request.time)
+        || (signedIn()
+          && resource.data.get('userId', null) == request.auth.uid
+          && hasProjectAccess(projectId)
+          && resource.data.get('status', null) == 'active'
+          && request.resource.data.get('status', null) == 'ended'
+          && request.resource.data.get('endedAt', null) == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'endedAt']));
       allow delete: if isOwner(projectId);
     }
 

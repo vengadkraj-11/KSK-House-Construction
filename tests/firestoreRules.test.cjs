@@ -25,6 +25,7 @@ async function commit(uid,writes,phone,provider,authTime){
 test('Firestore rules preserve member receipt reads and owner-only writes',async()=>{
   await seed('users/owner',{projectId:stringValue('ksk'),role:stringValue('owner')});
   await seed('users/viewer',{projectId:stringValue('ksk'),role:stringValue('viewer')});
+  await seed('users/viewer/devices/device-token',{token:stringValue('test-token'),platform:stringValue('android')});
   await seed('projects/ksk/sheets/sheet1',{name:stringValue('Test')});
   await seed('projects/ksk/sheets/project_dashboard',{name:stringValue('Dashboard')});
   await seed('projects/ksk/sheets/daily_expenses',{name:stringValue('Expenses')});
@@ -35,8 +36,8 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   await seed('projects/ksk/progress/progress1',{stage:stringValue('Foundation'),percent:numberValue(50)});
   await seed('projects/ksk/diary/diary1',{title:stringValue('Site note')});
   await seed('projects/ksk/reminders/reminder1',{title:stringValue('Inspection')});
-  await seed('projects/ksk/login_history/owner-session',{userId:stringValue('owner'),role:stringValue('owner'),email:stringValue('owner@example.test'),displayName:stringValue('Owner'),installationId:stringValue('ksk-test-owner'),deviceModel:stringValue('Test device'),deviceManufacturer:stringValue('Test'),deviceName:stringValue('Owner phone'),platform:stringValue('android'),loginAt:{timestampValue:new Date().toISOString()},lastActiveAt:{timestampValue:new Date().toISOString()}});
-  await seed('projects/ksk/login_history/viewer-session',{userId:stringValue('viewer'),role:stringValue('viewer'),email:stringValue('viewer@example.test'),displayName:stringValue('Viewer'),installationId:stringValue('ksk-test-viewer'),deviceModel:stringValue('Test device'),deviceManufacturer:stringValue('Test'),deviceName:stringValue('Viewer phone'),platform:stringValue('android'),loginAt:{timestampValue:new Date().toISOString()},lastActiveAt:{timestampValue:new Date().toISOString()}});
+  await seed('projects/ksk/login_history/owner-session',{userId:stringValue('owner'),role:stringValue('owner'),email:stringValue('owner@example.test'),displayName:stringValue('Owner'),installationId:stringValue('ksk-test-owner'),deviceModel:stringValue('Test device'),deviceManufacturer:stringValue('Test'),deviceName:stringValue('Owner phone'),platform:stringValue('android'),status:stringValue('active'),loginAt:{timestampValue:new Date().toISOString()},lastActiveAt:{timestampValue:new Date().toISOString()}});
+  await seed('projects/ksk/login_history/viewer-session',{userId:stringValue('viewer'),role:stringValue('viewer'),email:stringValue('viewer@example.test'),displayName:stringValue('Viewer'),installationId:stringValue('ksk-test-viewer'),deviceModel:stringValue('Test device'),deviceManufacturer:stringValue('Test'),deviceName:stringValue('Viewer phone'),platform:stringValue('android'),status:stringValue('active'),loginAt:{timestampValue:new Date().toISOString()},lastActiveAt:{timestampValue:new Date().toISOString()}});
   await seed('projects/ksk/approvals/approval1',{status:stringValue('pending')});
   await seed('projects/ksk/activity/activity1',{title:stringValue('Owner activity')});
   await seed('projects/ksk/bills/payment1/images/receipt1',{recordId:stringValue('payment1'),imageBase64:stringValue('YWJj'),fileName:stringValue('receipt.jpg'),mimeType:stringValue('image/jpeg'),createdBy:stringValue('owner'),createdAt:{timestampValue:new Date().toISOString()}});
@@ -48,10 +49,16 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal((await request('projects/ksk/bills/payment1/images/receipt1','viewer')).status,200);
   assert.equal((await request('projects/ksk/attachments/diary1/images/photo1','viewer')).status,403);
   assert.equal((await request('projects/ksk/payments/payment1','viewer')).status,200);
-  assert.equal((await request('projects/ksk/login_history/viewer-session','viewer')).status,403);
+  assert.equal((await request('projects/ksk/login_history/viewer-session','viewer')).status,200,'A legacy viewer may read only their own session history.');
+  assert.equal((await request('projects/ksk/login_history/viewer-session','viewer','DELETE')).status,403,'Viewers cannot clear device history.');
+  assert.equal((await request('projects/ksk/login_history/viewer-session','owner','DELETE')).status,200,'The owner can clear a selected device history record.');
+  assert.equal((await request('projects/ksk/login_history/viewer-session','owner')).status,404,'Selected device history remains cleared after refresh.');
   assert.equal((await request('projects/ksk/activity/activity1','viewer')).status,403);
   assert.equal((await request('projects/ksk/login_history/owner-session','viewer')).status,403);
   assert.equal((await request('projects/ksk/login_history/owner-session','owner')).status,200);
+  assert.equal((await request('users/viewer/devices/device-token','viewer')).status,200,'A legacy viewer may read only their own device registration.');
+  assert.equal((await request('users/viewer/devices/device-token','owner')).status,200,'The owner can review device registrations for account cleanup.');
+  assert.equal((await request('users/viewer/devices/device-token','different-user')).status,403,'Other viewers cannot read a member device registration.');
   for(const uid of ['owner','viewer']) {
     const listed=await fetch(`${root}/projects/ksk:runQuery`,{method:'POST',headers:{Authorization:`Bearer ${token(uid)}`,'Content-Type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'payments'}],limit:10}})});
     assert.equal(listed.status,200,await listed.text());
@@ -171,10 +178,12 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
     const access=`projects/${project}/databases/(default)/documents/viewerAccess/${uid}`;
     const phoneIndex=`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${phone}`;
     const phoneStatus=`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${phone}`;
+    const history=`projects/${project}/databases/(default)/documents/viewerAccessHistory/registered-${uid}`;
     return commit(uid,[
       {update:{name:access,fields:{uid:stringValue(uid),fullName:stringValue('Family Viewer'),normalizedMobileNumber:stringValue(phone),status:stringValue('pending'),preferredLanguage:stringValue(preferredLanguage)}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]},
       {update:{name:phoneIndex,fields:{uid:stringValue(uid),status:stringValue('pending')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
-      {update:{name:phoneStatus,fields:{status:stringValue('pending')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}
+      {update:{name:phoneStatus,fields:{status:stringValue('pending')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+      {update:{name:history,fields:{uid:stringValue(uid),fullName:stringValue('Family Viewer'),normalizedMobileNumber:stringValue(phone),action:stringValue('registered'),status:stringValue('pending'),actorUid:stringValue(uid)}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}
     ],undefined,provider);
   };
   const decideViewer=async(uid,phone,status)=>{
@@ -206,13 +215,16 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const clearPendingPhone='+15550004320';
   assert.equal((await createViewer('clear-pending-viewer',clearPendingPhone)).status,200,'A pending registration can be created for history-clear validation.');
   assert.equal((await request('viewerAccess/clear-pending-viewer','clear-pending-viewer','DELETE',undefined,undefined,'password')).status,403,'A registrant cannot delete their own request history.');
+  assert.equal((await request('viewerAccessHistory/registered-clear-pending-viewer','clear-pending-viewer','GET',undefined,undefined,'password')).status,403,'Registrants cannot read or enumerate owner history.');
+  assert.equal((await request('viewerAccessHistory/registered-clear-pending-viewer','clear-pending-viewer','DELETE',undefined,undefined,'password')).status,403,'Registrants cannot clear owner history.');
   const clearPending=await commit('owner',[
     {delete:`projects/${project}/databases/(default)/documents/viewerAccess/clear-pending-viewer`},
     {delete:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${clearPendingPhone}`},
-    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${clearPendingPhone}`}
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${clearPendingPhone}`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerAccessHistory/registered-clear-pending-viewer`}
   ]);
   assert.equal(clearPending.status,200,await clearPending.text(),'The owner can clear a pending request and its non-approved phone indexes.');
-  for(const path of ['viewerAccess/clear-pending-viewer',`viewerPhoneIndex/${clearPendingPhone}`,`viewerPhoneStatus/${clearPendingPhone}`]){
+  for(const path of ['viewerAccess/clear-pending-viewer',`viewerPhoneIndex/${clearPendingPhone}`,`viewerPhoneStatus/${clearPendingPhone}`,'viewerAccessHistory/registered-clear-pending-viewer']){
     assert.equal((await request(path,'owner')).status,404,`${path} stays cleared after reloading.`);
   }
   const simultaneousPhone='+15550004321';
@@ -236,6 +248,27 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const approvedRequest=await request('viewerAccess/password-viewer','password-viewer','GET',undefined,undefined,'password');
   const approvalSeconds=Math.floor(Date.parse((await approvedRequest.json()).fields.approvalDate.timestampValue)/1000);
   assert.ok(approvalSeconds>0,'Owner approval is recorded against the authenticated viewer UID.');
+  const viewerSessionPath=`projects/${project}/databases/(default)/documents/projects/ksk/login_history/password-viewer-session`;
+  const createViewerSession=await commit('password-viewer',[{update:{name:viewerSessionPath,fields:{
+    userId:stringValue('password-viewer'),email:stringValue(''),displayName:stringValue('Family Viewer'),
+    role:stringValue('viewer'),installationId:stringValue('installation-one'),
+    deviceModel:stringValue('Unknown model'),deviceManufacturer:stringValue('Unknown manufacturer'),
+    deviceName:stringValue('Unnamed device'),platform:stringValue('web'),status:stringValue('active')
+  }},currentDocument:{exists:false},updateTransforms:[{fieldPath:'loginAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'lastActiveAt',setToServerValue:'REQUEST_TIME'}]}],undefined,'password');
+  assert.equal(createViewerSession.status,200,await createViewerSession.text(),'Approved viewers can create their own session record.');
+  assert.equal((await request('projects/ksk/login_history/password-viewer-session','password-viewer','GET',undefined,undefined,'password')).status,200,'Viewers can read only their own session records.');
+  assert.equal((await request('projects/ksk/login_history/password-viewer-session','different-user','GET',undefined,undefined,'password')).status,403,'Other viewers cannot read a member session.');
+  const viewerSessionTouch=await commit('password-viewer',[{update:{name:viewerSessionPath,fields:{}},updateMask:{fieldPaths:['lastActiveAt']},updateTransforms:[{fieldPath:'lastActiveAt',setToServerValue:'REQUEST_TIME'}]}],undefined,'password');
+  assert.equal(viewerSessionTouch.status,200,await viewerSessionTouch.text(),'A viewer can update only their own last-active timestamp.');
+  const viewerSessionRevoke=await commit('password-viewer',[{update:{name:viewerSessionPath,fields:{status:stringValue('revoked'),revokedBy:stringValue('password-viewer')}},updateMask:{fieldPaths:['status','revokedBy']},updateTransforms:[{fieldPath:'revokedAt',setToServerValue:'REQUEST_TIME'}]}],undefined,'password');
+  assert.equal(viewerSessionRevoke.status,403,'Viewers cannot revoke session records.');
+  assert.equal((await request('projects/ksk/login_history/password-viewer-session','password-viewer','DELETE',undefined,undefined,'password')).status,403,'Viewers cannot delete session records.');
+  const ownerSessionRevoke=await commit('owner',[{update:{name:viewerSessionPath,fields:{status:stringValue('revoked'),revokedBy:stringValue('owner')}},updateMask:{fieldPaths:['status','revokedBy']},updateTransforms:[{fieldPath:'revokedAt',setToServerValue:'REQUEST_TIME'}]}]);
+  assert.equal(ownerSessionRevoke.status,200,await ownerSessionRevoke.text(),'The owner can revoke a member session.');
+  assert.equal((await request('projects/ksk/login_history/password-viewer-session','password-viewer','GET',undefined,undefined,'password')).status,200,'A revoked session remains available to its authenticated owner for history.');
+  assert.equal((await request('viewerAccessHistory/registered-password-viewer','password-viewer','GET',undefined,undefined,'password')).status,403,'Viewers cannot read registration or approval history.');
+  assert.equal((await request('viewerAccessHistory/registered-password-viewer','owner')).status,200,'The owner can read access history.');
+  assert.equal((await request(`viewerPhoneStatus/${phone}`,'password-viewer','GET',undefined,undefined,'password')).status,200,'A member can read only their own indexed phone status.');
   const approvedHistoryDelete=await commit('owner',[
     {delete:`projects/${project}/databases/(default)/documents/viewerAccess/password-viewer`},
     {delete:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${phone}`},
@@ -259,7 +292,7 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   }
   assert.equal((await request('projects/ksk/diary/diary1','password-viewer','GET',undefined,undefined,'password')).status,403,'Family viewers cannot read site diary records.');
   assert.equal((await request('projects/ksk/attachments/diary1/images/photo1','password-viewer','GET',undefined,undefined,'password')).status,403,'Family viewers cannot read diary photos.');
-  assert.equal((await request('projects/ksk/login_history/viewer-session','password-viewer','GET',undefined,undefined,'password')).status,403,'Family viewers cannot read login history.');
+  assert.equal((await request('projects/ksk/login_history/viewer-session','password-viewer','GET',undefined,undefined,'password')).status,403,'Viewers cannot read another UID login history.');
   assert.equal((await request('projects/ksk/activity/activity1','password-viewer','GET',undefined,undefined,'password')).status,403,'Family viewers cannot read owner activity.');
   const permittedSheetIds=['project_dashboard','project_setup','materials_ground','materials_first','materials_boq','labour_work','professional_fees','misc_equipment','daily_expenses','work_schedule','floor_summary'];
   const permittedSheetQuery=await fetch(`${root}/projects/ksk:runQuery`,{
@@ -296,8 +329,7 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal((await request('users/password-viewer','password-viewer','PATCH',{fields:{role:stringValue('owner'),projectId:stringValue('ksk')}},undefined,'password')).status,403,'Family viewers cannot create or change role documents.');
   assert.equal((await request(`viewerPhoneIndex/+15550000000`,'different-user','GET',undefined,undefined,'password')).status,403,'Viewers cannot read another member private phone index.');
   const phoneStatusLookup=await request(`viewerPhoneStatus/${phone}`,'different-user','GET',undefined,undefined,'password');
-  assert.equal(phoneStatusLookup.status,200,'A sign-in lookup may read only the indexed approval status.');
-  assert.equal((await phoneStatusLookup.json()).fields.uid,undefined,'Phone lookups do not expose another member UID.');
+  assert.equal(phoneStatusLookup.status,403,'Phone status is private; unauthenticated phone-number enumeration is denied.');
   const viewerUpload=await request('projects/ksk/bills/payment1/images?documentId=viewer-upload','password-viewer','POST',{fields:{recordId:stringValue('payment1'),imageBase64:stringValue('YWJj'),fileName:stringValue('receipt.jpg'),mimeType:stringValue('image/jpeg'),createdBy:stringValue('owner'),createdAt:{timestampValue:new Date().toISOString()}}},undefined,'password');
   assert.equal(viewerUpload.status,403,'Approved viewers cannot upload attachments.');
   const viewerRequestList=await fetch(`${root}:runQuery`,{method:'POST',headers:{Authorization:`Bearer ${token('password-viewer',undefined,'password')}`,'Content-Type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'viewerAccess'}]}})});
@@ -339,6 +371,18 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal(revoked.status,200,await revoked.text());
   assert.equal((await request('projects/ksk/sheets/daily_expenses','password-viewer','GET',undefined,undefined,'password')).status,403,'Revocation immediately blocks future project reads.');
   assert.equal((await request('projects/ksk/bills/payment1/images/receipt1','password-viewer','GET',undefined,undefined,'password')).status,403,'Revocation immediately blocks future attachment reads.');
+  const accountDeletionEvent=`projects/${project}/databases/(default)/documents/viewerAccessHistory/account-deleted-password-viewer`;
+  const deleteApprovedAccount=await commit('owner',[
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerAccountDeletions/password-viewer`,fields:{uid:stringValue('password-viewer'),actorUid:stringValue('owner')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]},
+    {delete:`projects/${project}/databases/(default)/documents/viewerAccess/password-viewer`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${phone}`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${phone}`},
+    {delete:viewerSessionPath},
+    {update:{name:accountDeletionEvent,fields:{uid:stringValue('password-viewer'),fullName:stringValue('Family Viewer'),normalizedMobileNumber:stringValue(phone),action:stringValue('account_deleted'),status:stringValue('deleted'),previousStatus:stringValue('revoked'),actorUid:stringValue('owner')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}
+  ]);
+  assert.equal(deleteApprovedAccount.status,200,await deleteApprovedAccount.text(),'The owner can delete a viewer profile and access records without deleting the Auth identity.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','password-viewer','GET',undefined,undefined,'password')).status,403,'The still-authenticated deleted UID cannot read project data.');
+  assert.equal((await request('viewerAccountDeletions/password-viewer','password-viewer','GET',undefined,undefined,'password')).status,403,'The account deletion tombstone remains private to the owner.');
 
   const rejectedPhone='+15551234568';
   const rejectedRequest=await createViewer('rejected-viewer',rejectedPhone);
@@ -387,4 +431,20 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const ownerRevokesLegacy=await commit('owner',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/viewer`,fields:{uid:stringValue('viewer'),fullName:stringValue('Existing viewer'),normalizedMobileNumber:stringValue(''),status:stringValue('revoked'),preferredLanguage:stringValue('en'),legacy:{booleanValue:true},revokedBy:stringValue('owner'),decidedBy:stringValue('owner'),decisionNote:stringValue('Legacy viewer access revoked by owner.')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'revokedAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'decisionAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}]);
   assert.equal(ownerRevokesLegacy.status,200,await ownerRevokesLegacy.text());
   assert.equal((await request('projects/ksk/sheets/sheet1','viewer')).status,403,'The owner can revoke a pre-existing viewer account without changing owner-managed role records.');
+  const ownerCannotDeleteOwner=await commit('owner',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccountDeletions/owner`,fields:{uid:stringValue('owner'),actorUid:stringValue('owner')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
+  assert.equal(ownerCannotDeleteOwner.status,403,'An owner cannot create an account-deletion marker for themselves.');
+  assert.equal((await request('users/owner','owner','DELETE')).status,403,'The owner membership profile cannot be deleted.');
+  const legacyDeletionHistory=`projects/${project}/databases/(default)/documents/viewerAccessHistory/account-deleted-viewer`;
+  const deleteLegacyAccount=await commit('owner',[
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerAccountDeletions/viewer`,fields:{uid:stringValue('viewer'),actorUid:stringValue('owner')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]},
+    {delete:`projects/${project}/databases/(default)/documents/viewerAccess/viewer`},
+    {delete:`projects/${project}/databases/(default)/documents/users/viewer`},
+    {delete:`projects/${project}/databases/(default)/documents/users/viewer/devices/device-token`},
+    {update:{name:legacyDeletionHistory,fields:{uid:stringValue('viewer'),fullName:stringValue('Existing viewer'),normalizedMobileNumber:stringValue(''),action:stringValue('account_deleted'),status:stringValue('deleted'),previousStatus:stringValue('revoked'),actorUid:stringValue('owner')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}
+  ]);
+  assert.equal(deleteLegacyAccount.status,200,await deleteLegacyAccount.text(),'The owner can atomically remove a viewer profile while retaining a deletion audit.');
+  assert.equal((await request('users/viewer','owner')).status,404,'The eligible viewer profile is removed.');
+  assert.equal((await request('users/viewer/devices/device-token','owner')).status,404,'The eligible viewer device registration is removed.');
+  assert.equal((await request('viewerAccountDeletions/viewer','owner')).status,200,'The owner-only tombstone prevents the same Auth UID from registering again.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','viewer')).status,403,'The still-authenticated deleted UID has no project access.');
 });

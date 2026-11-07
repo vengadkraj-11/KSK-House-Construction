@@ -28,7 +28,7 @@ import {createLoginHistorySession, clearLoginHistory, loginHistoryDate, LoginHis
 import {downloadBase64File, printHtmlInBrowser} from './src/services/webFiles';
 import {Alert} from './src/services/platformAlert';
 import {KSK_DESIGN} from './src/theme/kskDesignSystem';
-import {getPreferredLanguage, savePreferredLanguage, shouldRenderFamilyViewer} from './src/services/websiteAccess';
+import {getPreferredLanguage, resolveProjectRole, savePreferredLanguage, shouldRenderFamilyViewer} from './src/services/websiteAccess';
 import FamilyViewer from './src/components/FamilyViewer';
 import ViewerAccessManagement from './src/components/ViewerAccessManagement';
 
@@ -1078,7 +1078,7 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
       </TouchableOpacity>
     </View>
 
-    {user?.uid && (role === 'owner' || role === 'viewer') ? <LoginHistoryCard uid={user.uid} role={role}/> : null}
+    {user?.uid && role === 'viewer' ? <LoginHistoryCard uid={user.uid} role={role}/> : null}
 
     {role === 'owner' || role === 'viewer' ? <View style={cardStyle({marginBottom: 12})}>
       <Text style={{fontSize: 16, fontWeight: '800', color: C.ink}}>Permission diagnostics</Text>
@@ -1139,7 +1139,7 @@ function AppContent() {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role>(null);
   const [roleChecked, setRoleChecked] = useState(false);
-  const loginSessionRef = useRef<{uid:string; touch:()=>Promise<void>}|null>(null);
+  const loginSessionRef = useRef<{uid:string; touch:()=>Promise<void>; end:()=>Promise<void>}|null>(null);
   const [membershipIssue, setMembershipIssue] = useState<'missing'|'wrong-project'|'invalid-role'|'unavailable'|null>(null);
   const [sheets, setSheets] = useState<SheetMap>(LOCAL_WORKBOOK);
   const [cloudSheetsLoaded, setCloudSheetsLoaded] = useState(false);
@@ -1208,16 +1208,63 @@ function AppContent() {
 
   useEffect(() => {
     if (!user || !db) return;
-    const ref = doc(db, 'users', user.uid);
-    return onSnapshot(ref, snapshot => {
-      const membership = snapshot.data();
-      const assigned = membership?.projectId === 'ksk' ? membership?.role : null;
-      setRole(assigned === 'owner' || assigned === 'viewer' ? assigned : null);
-      setMembershipIssue(!snapshot.exists() ? 'missing' : membership?.projectId !== 'ksk' ? 'wrong-project' : assigned !== 'owner' && assigned !== 'viewer' ? 'invalid-role' : null);
-      setProjectMembershipDiagnostic(!snapshot.exists() ? 'missing' : membership?.projectId !== 'ksk' ? 'wrong-project' : assigned === 'owner' || assigned === 'viewer' ? 'verified' : 'invalid-role', assigned === 'owner' || assigned === 'viewer' ? assigned : null);
+    let active = true;
+    let membership: any = null;
+    let access: any = null;
+    let membershipExists = false;
+    let accessExists = false;
+    let membershipReady = false;
+    let accessReady = false;
+    let membershipError = false;
+    const resolveRole = () => {
+      if (!active || !membershipReady || !accessReady) return;
+      const assigned = resolveProjectRole(membership, access, accessExists, user.uid);
+      setRole(assigned);
+      const issue = assigned ? null
+        : membershipError ? 'unavailable'
+          : !membershipExists ? 'missing'
+            : membership?.projectId !== 'ksk' ? 'wrong-project'
+              : membership?.role !== 'owner' && membership?.role !== 'viewer' ? 'invalid-role'
+                : null;
+      setMembershipIssue(issue);
+      const diagnosticStatus = assigned ? 'verified' : issue || 'invalid-role';
+      setProjectMembershipDiagnostic(diagnosticStatus, assigned);
       setRoleChecked(true);
-      if (__DEV__) console.info('[membership]', {operation: 'membership snapshot', path: 'users/{authenticatedUid}', status: !snapshot.exists() ? 'missing' : membership?.projectId !== 'ksk' ? 'wrong-project' : assigned === 'owner' || assigned === 'viewer' ? 'verified' : 'invalid-role', projectId: membership?.projectId || null, role: assigned === 'owner' || assigned === 'viewer' ? assigned : null});
-    }, error => {setRole(null); setMembershipIssue('unavailable'); setProjectMembershipDiagnostic('unavailable', null); setRoleChecked(true); if (__DEV__) console.warn('[membership]', {operation: 'membership snapshot', path: 'users/{authenticatedUid}', code: error?.code || 'unknown', projectId: 'ksk', role: null});});
+      if (__DEV__) console.info('[membership]', {
+        operation: 'membership snapshot',
+        path: 'users/{authenticatedUid}, viewerAccess/{authenticatedUid}',
+        status: diagnosticStatus,
+        projectId: membership?.projectId || 'ksk',
+        role: assigned
+      });
+    };
+    const stopMembership = onSnapshot(doc(db, 'users', user.uid), snapshot => {
+      membership = snapshot.data() || null;
+      membershipExists = snapshot.exists();
+      membershipReady = true;
+      resolveRole();
+    }, error => {
+      membershipError = true;
+      membershipReady = true;
+      resolveRole();
+      if (__DEV__) console.warn('[membership]', {operation: 'membership snapshot', path: 'users/{authenticatedUid}', code: error?.code || 'unknown', projectId: 'ksk', role: null});
+    });
+    const stopAccess = onSnapshot(doc(db, 'viewerAccess', user.uid), snapshot => {
+      access = snapshot.data() || null;
+      accessExists = snapshot.exists();
+      accessReady = true;
+      resolveRole();
+    }, error => {
+      accessReady = true;
+      accessExists = true;
+      if (__DEV__) console.warn('[membership]', {operation: 'viewer access snapshot', path: 'viewerAccess/{authenticatedUid}', code: error?.code || 'unknown', projectId: 'ksk', role: null});
+      resolveRole();
+    });
+    return () => {
+      active = false;
+      stopMembership();
+      stopAccess();
+    };
   }, [user]);
 
   useEffect(() => {
@@ -1226,7 +1273,7 @@ function AppContent() {
     loginSessionRef.current = null;
     void createLoginHistorySession(user, role).then(session => {
       if (!active) return;
-      loginSessionRef.current = {uid:user.uid, touch:session.touch};
+      loginSessionRef.current = {uid:user.uid, touch:session.touch, end:session.end};
     }).catch(error => console.warn('[login-history] Could not record sign-in:', error?.code || error?.message || error));
     const subscription = AppState.addEventListener('change', state => {
       if (state === 'active' && loginSessionRef.current?.uid === user.uid) {
@@ -1236,7 +1283,11 @@ function AppContent() {
     return () => {
       active = false;
       subscription.remove();
-      if (loginSessionRef.current?.uid === user.uid) loginSessionRef.current = null;
+      if (loginSessionRef.current?.uid === user.uid) {
+        const session = loginSessionRef.current;
+        loginSessionRef.current = null;
+        void session.end().catch(error => console.warn('[login-history] Could not close sign-in session:', error?.code || error?.message || error));
+      }
     };
   }, [user?.uid, role, demoMode]);
 
@@ -1344,7 +1395,27 @@ function AppContent() {
     setShowViewerAccessAfterLogin(false);
   }, [showViewerAccessAfterLogin, user?.uid, role, roleChecked]);
 
+  const closeLoginSession = async () => {
+    const session = loginSessionRef.current;
+    if (!session || session.uid !== user?.uid) return;
+    loginSessionRef.current = null;
+    await session.end();
+  };
+
+  const openOwnerLogin = async () => {
+    try {
+      if (user && auth) {
+        await closeLoginSession();
+        await signOut(auth);
+      }
+      setWebEntry('owner-login');
+    } catch (error: any) {
+      Alert.alert('Could not open owner login', error?.message || 'Please try again.');
+    }
+  };
+
   const performSignOut = async () => {
+    await closeLoginSession();
     if (auth) await signOut(auth);
     setDemoMode(false);
     setScreen('Dashboard');
@@ -1660,16 +1731,8 @@ function AppContent() {
         if (!languageLoaded) return <SafeAreaView style={{flex: 1, backgroundColor: C.paper, justifyContent: 'center', alignItems: 'center'}}><ActivityIndicator color={C.green}/></SafeAreaView>;
         if (webEntry === 'choices') return <FamilyViewer
           onLanguageChange={value => void changeLanguage(value)}
-          onOwnerLogin={() => {
-            const showLogin = () => setWebEntry('owner-login');
-            if (user && auth) {
-              void signOut(auth).then(showLogin).catch((error: any) => {
-                Alert.alert('Could not open owner login', error?.message || 'Please try again.');
-              });
-            } else {
-              showLogin();
-            }
-          }}
+          onOwnerLogin={() => void openOwnerLogin()}
+          onBeforeSignOut={closeLoginSession}
         />;
         return <LoginScreen language={language} onBack={() => setWebEntry('choices')} onLogin={signIn}/>;
       }
@@ -1678,16 +1741,8 @@ function AppContent() {
     if (!roleChecked) return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', alignItems:'center'}}><ActivityIndicator color={C.green}/><Text style={{color:C.muted, marginTop:12}}>{language === 'ta' ? 'திட்ட அணுகலைச் சரிபார்க்கிறது…' : 'Checking project access…'}</Text></SafeAreaView>;
     if (Platform.OS === 'web' && shouldRenderFamilyViewer(window.location.pathname, role, !!user)) return <FamilyViewer
       onLanguageChange={value => void changeLanguage(value)}
-      onOwnerLogin={() => {
-        const showLogin = () => setWebEntry('owner-login');
-        if (auth) {
-          void signOut(auth).then(showLogin).catch((error: any) => {
-            Alert.alert('Could not open owner login', error?.message || 'Please try again.');
-          });
-        } else {
-          showLogin();
-        }
-      }}
+      onOwnerLogin={() => void openOwnerLogin()}
+      onBeforeSignOut={closeLoginSession}
     />;
     const accessMessage = membershipIssue === 'missing'
       ? 'User membership document is missing at users/{authenticatedUid}.'
@@ -1701,16 +1756,8 @@ function AppContent() {
 
   if (Platform.OS === 'web' && shouldRenderFamilyViewer(window.location.pathname, role, !!user)) return <FamilyViewer
     onLanguageChange={value => void changeLanguage(value)}
-    onOwnerLogin={() => {
-      const showLogin = () => setWebEntry('owner-login');
-      if (auth) {
-        void signOut(auth).then(showLogin).catch((error: any) => {
-          Alert.alert('Could not open owner login', error?.message || 'Please try again.');
-        });
-      } else {
-        showLogin();
-      }
-    }}
+    onOwnerLogin={() => void openOwnerLogin()}
+    onBeforeSignOut={closeLoginSession}
   />;
 
   const syncLabel = demoMode || !user ? 'LOCAL PREVIEW' : syncState;

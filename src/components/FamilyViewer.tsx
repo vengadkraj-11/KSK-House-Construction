@@ -319,18 +319,25 @@ function AccessForm({mode, language, user, onLanguageChange, onSignIn, onBack, o
       }
 
       const result = await lookupViewerAccessByPhone(requester.uid, normalizedPhone);
-      if (!result) {
-        setMessage('No approved account uses this number. Please Sign Up.');
-      } else if (result.status === 'pending') {
+      if (result?.status === 'pending') {
         setMessage('Your registration is awaiting owner approval.');
-      } else if (result.status === 'rejected') {
+      } else if (result?.status === 'rejected') {
         setMessage('This account has been rejected. Contact the project owner.');
-      } else if (result.status === 'revoked') {
+      } else if (result?.status === 'revoked') {
         setMessage('Access to this account was revoked. Contact the project owner.');
-      } else if (result.currentSession && result.uid === requester.uid && canContinueWithApprovedSession(requester.uid, result.request, normalizedPhone)) {
+      } else if (result?.currentSession && result.uid === requester.uid && canContinueWithApprovedSession(requester.uid, result.request, normalizedPhone)) {
         onApproved(result.request!);
       } else {
-        const recovery = await requestViewerRecovery(requester.uid, normalizedPhone);
+        let recovery;
+        try {
+          recovery = await requestViewerRecovery(requester.uid, normalizedPhone);
+        } catch (issue: any) {
+          if (issue?.code === 'permission-denied') {
+            setMessage('This number could not be matched to an active approved membership. Check the number or contact the project owner.');
+            return;
+          }
+          throw issue;
+        }
         if (recovery.status === 'pending') setMessage('Your sign-in recovery is awaiting owner verification.');
         else if (recovery.status === 'approved' && recovery.currentSession) setMessage('This mobile number is already associated with a member account. Contact the project owner.');
         else setMessage('This number is already approved. Sign in on its saved browser or request secure recovery.');
@@ -559,9 +566,10 @@ function Empty({language}: {language: ViewerLanguage}) {
   return <Card><Text style={{fontSize: 12, color: colors.inkMuted}}>{text(language, 'No records available yet.')}</Text></Card>;
 }
 
-export default function FamilyViewer({onOwnerLogin, onLanguageChange}: {
+export default function FamilyViewer({onOwnerLogin, onLanguageChange, onBeforeSignOut}: {
   onOwnerLogin?: () => void;
   onLanguageChange?: (value: ViewerLanguage) => void;
+  onBeforeSignOut?: () => Promise<void>;
 }) {
   const [accessMode, setAccessMode] = useState<'home' | 'sign-in' | 'sign-up'>('home');
   const [user, setUser] = useState<User | null>(null);
@@ -628,6 +636,7 @@ export default function FamilyViewer({onOwnerLogin, onLanguageChange}: {
       if (!active) return;
       setAccess(request);
       setLegacyViewer(false);
+      setMobileConfirmed(request?.status === 'approved');
       const savedLanguage = request?.preferredLanguage;
       if (savedLanguage === 'en' || savedLanguage === 'ta') {
         setLanguage(savedLanguage);
@@ -691,10 +700,6 @@ export default function FamilyViewer({onOwnerLogin, onLanguageChange}: {
     return () => {active = false; stop();};
   }, [user?.uid]);
 
-  useEffect(() => {
-    setMobileConfirmed(false);
-  }, [user?.uid, access?.status, access?.normalizedMobileNumber]);
-
   const canRead = !!user && (legacyViewer || (access?.status === 'approved' && mobileConfirmed));
   useEffect(() => {
     if (!canRead || !user || !db) {
@@ -751,7 +756,14 @@ export default function FamilyViewer({onOwnerLogin, onLanguageChange}: {
   if (!languageReady) return <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas}}><ActivityIndicator color={colors.primary}/></View>;
   if (user && accessMode === 'home' && (!accessChecked || !legacyCheckComplete)) return <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas}}><ActivityIndicator color={colors.primary}/><Text style={bodyStyle}>{t('Loading project records…')}</Text></View>;
   if (ownerAccount) return <View style={{flex: 1, justifyContent: 'center', padding: 20, backgroundColor: colors.canvas}}>
-    <Card><Text style={headingStyle}>{t('Family viewer')}</Text><Text style={bodyStyle}>{t('An owner account is currently signed in. Sign out, then create a family viewer access request.')}</Text><View style={{marginTop: 14}}><ActionButton label={t('Sign out')} onPress={() => void signOut(viewerAuth)}/></View></Card>
+    <Card><Text style={headingStyle}>{t('Family viewer')}</Text><Text style={bodyStyle}>{t('An owner account is currently signed in. Sign out, then create a family viewer access request.')}</Text><View style={{marginTop: 14}}><ActionButton label={t('Sign out')} onPress={() => void (async () => {
+      try {
+        await onBeforeSignOut?.();
+        await signOut(viewerAuth);
+      } catch (issue: any) {
+        setErrors(current => [...current, localizedError(issue, language, 'Could not sign out securely.')]);
+      }
+    })()}/></View></Card>
   </View>;
   if (!user || (!mobileConfirmed && !legacyViewer)) {
     if (accessMode === 'home') return <AccessHome
@@ -784,7 +796,14 @@ export default function FamilyViewer({onOwnerLogin, onLanguageChange}: {
     onSignOut={() => {
       setMobileConfirmed(false);
       setAccessMode('home');
-      void signOut(viewerAuth);
+      void (async () => {
+        try {
+          await onBeforeSignOut?.();
+          await signOut(viewerAuth);
+        } catch (issue: any) {
+          setErrors(current => [...current, localizedError(issue, language, 'Could not sign out securely.')]);
+        }
+      })();
     }}
     sheets={sheets}
     records={records}

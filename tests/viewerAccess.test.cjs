@@ -8,16 +8,67 @@ const ts = require('typescript');
 function createViewerAccess() {
   const documents = new Map();
   let timestamp = 0;
+  let autoId = 0;
   let transactionQueue = Promise.resolve();
-  const reference = (...parts) => ({path: parts.slice(1).join('/')});
+  const reference = (...parts) => ({
+    path: parts.length === 1 && parts[0]?.path
+      ? `${parts[0].path}/generated-${++autoId}`
+      : parts.slice(1).join('/')
+  });
   const snapshot = ref => {
     const data = documents.get(ref.path);
     return {exists: () => data !== undefined, data: () => data};
   };
+  const commitWrites = writes => {
+    for (const write of writes) {
+      if (write.type === 'update' && !documents.has(write.ref.path)) throw new Error('Missing document');
+      if (write.type === 'set' && write.ref.path.startsWith('viewerPhoneIndex/')
+          && documents.has(write.ref.path)
+          && documents.get(write.ref.path).uid !== write.data.uid) {
+        const error = new Error('Phone number is already registered.');
+        error.code = 'permission-denied';
+        throw error;
+      }
+    }
+    for (const write of writes) {
+      if (write.type === 'delete') documents.delete(write.ref.path);
+      else documents.set(write.ref.path, {
+        ...(write.type === 'update' ? documents.get(write.ref.path) : {}),
+        ...write.data
+      });
+    }
+  };
   const firestore = new Proxy({
     doc: reference,
+    collection: (...parts) => ({path: parts.slice(1).join('/')}),
+    where: (field, operator, value) => ({field, operator, value}),
+    limit: count => ({limit: count}),
+    query: (ref, ...constraints) => ({path: ref.path, constraints}),
     serverTimestamp: () => `server-time-${++timestamp}`,
     getDoc: async ref => snapshot(ref),
+    getDocs: async queryRef => {
+      const filters = queryRef.constraints?.filter(item => item.field) || [];
+      let docs = [...documents.entries()]
+        .filter(([key]) => key.startsWith(`${queryRef.path}/`))
+        .filter(([, data]) => filters.every(filter => data[filter.field] === filter.value))
+        .map(([key, data]) => ({id: key.split('/').pop(), ref: {path: key}, data: () => data}));
+      const max = queryRef.constraints?.find(item => item.limit)?.limit;
+      if (max) docs = docs.slice(0, max);
+      return {docs, empty: docs.length === 0, size: docs.length};
+    },
+    updateDoc: async (ref, data) => {
+      if (!documents.has(ref.path)) throw new Error('Missing document');
+      documents.set(ref.path, {...documents.get(ref.path), ...data});
+    },
+    writeBatch: () => {
+      const writes = [];
+      return {
+        set: (ref, data) => writes.push({type: 'set', ref, data}),
+        update: (ref, data) => writes.push({type: 'update', ref, data}),
+        delete: ref => writes.push({type: 'delete', ref}),
+        commit: async () => commitWrites(writes)
+      };
+    },
     runTransaction: async (_database, callback) => {
       const previous = transactionQueue;
       let release;
@@ -32,14 +83,7 @@ function createViewerAccess() {
       };
       try {
         const result = await callback(transaction);
-        for (const write of writes) {
-          if (write.type === 'update' && !documents.has(write.ref.path)) throw new Error('Missing document');
-          if (write.type === 'delete') documents.delete(write.ref.path);
-          else documents.set(write.ref.path, {
-            ...(documents.get(write.ref.path) || {}),
-            ...write.data
-          });
-        }
+        commitWrites(writes);
         return result;
       } finally {
         release();
@@ -72,6 +116,7 @@ test('new family registration creates one normalized pending member and phone in
   assert.equal(documents.get('viewerAccess/new-uid').status, 'pending');
   assert.equal(documents.get('viewerPhoneIndex/+919876543210').uid, 'new-uid');
   assert.equal(documents.get('viewerPhoneStatus/+919876543210').status, 'pending');
+  assert.equal([...documents.values()].filter(item => item.action === 'registered').length, 1);
 });
 
 test('a pending member submitting again is idempotent and keeps pending status', async () => {
@@ -82,7 +127,7 @@ test('a pending member submitting again is idempotent and keeps pending status',
   assert.equal(repeated.created, false);
   assert.equal(repeated.status, 'pending');
   assert.equal(documents.get('viewerAccess/pending-uid').fullName, 'Pending Member');
-  assert.equal(documents.size, 3);
+  assert.equal(documents.size, 4);
 });
 
 test('approved members returning or choosing Sign Up do not create or reset a request', async () => {
@@ -110,7 +155,7 @@ test('approved members returning or choosing Sign Up do not create or reset a re
   assert.equal(documents.size, 3);
 });
 
-test('a different session finds an approved number but cannot authenticate as its member', async () => {
+test('a different session cannot enumerate another member through phone status lookup', async () => {
   const {lookupViewerAccessByPhone, canContinueWithApprovedSession, documents} = createViewerAccess();
   documents.set('viewerAccess/approved-uid', {
     uid: 'approved-uid',
@@ -123,10 +168,8 @@ test('a different session finds an approved number but cannot authenticate as it
   documents.set('viewerPhoneStatus/+919876543210', {status: 'approved'});
 
   const lookup = await lookupViewerAccessByPhone('new-device-uid', '+91 (98765) 43210');
-  assert.equal(lookup.status, 'approved');
-  assert.equal(lookup.currentSession, false);
-  assert.equal(lookup.uid, '', 'Phone lookups must not expose another member UID.');
-  assert.equal(canContinueWithApprovedSession('new-device-uid', lookup.request, '9876543210'), false);
+  assert.equal(lookup, null, 'Phone-only lookups must not expose whether another number is approved.');
+  assert.equal(canContinueWithApprovedSession('new-device-uid', null, '9876543210'), false);
 });
 
 test('revoked members cannot continue and repeated sign-up does not restore access', async () => {
@@ -156,11 +199,11 @@ test('different number formatting and simultaneous submissions create only one p
   assert.equal(normalizePhoneNumber('91 98765 43210'), '+919876543210');
 
   const results = await Promise.all([
-    registerViewerRequest('simultaneous-a', '9876543210', 'Member A', 'en'),
-    registerViewerRequest('simultaneous-b', '+91 98765-43210', 'Member B', 'ta')
+    registerViewerRequest('simultaneous-a', '9876543210', 'Member A', 'en').then(value => ({status: 'fulfilled', value}), error => ({status: 'rejected', error})),
+    registerViewerRequest('simultaneous-b', '+91 98765-43210', 'Member B', 'ta').then(value => ({status: 'fulfilled', value}), error => ({status: 'rejected', error}))
   ]);
-  assert.equal(results.filter(result => result.created).length, 1);
-  assert.equal(results.filter(result => result.status === 'pending').length, 2);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter(result => result.status === 'rejected').length, 1);
   assert.equal([...documents.keys()].filter(key => key.startsWith('viewerAccess/')).length, 1);
   assert.equal(documents.get('viewerPhoneIndex/+919876543210').status, 'pending');
   assert.equal(documents.get('viewerPhoneStatus/+919876543210').status, 'pending');
@@ -171,8 +214,7 @@ test('a new session can only request owner-verified recovery and never gains acc
   documents.set('viewerPhoneIndex/+919876543210', {uid: 'approved-uid', status: 'approved'});
   documents.set('viewerPhoneStatus/+919876543210', {status: 'approved'});
   const lookup = await lookupViewerAccessByPhone('new-session', '+91 98765 43210');
-  assert.equal(lookup?.status, 'approved');
-  assert.equal(lookup?.currentSession, false);
+  assert.equal(lookup, null);
   assert.equal(documents.has('viewerAccess/new-session'), false);
 
   const recovery = await requestViewerRecovery('new-session', '9876543210');
@@ -185,7 +227,7 @@ test('a new session can only request owner-verified recovery and never gains acc
   assert.equal([...documents.keys()].filter(key => key.startsWith('viewerRecoveryRequests/')).length, 1);
 });
 
-test('clearing request history removes pending and rejected history without changing approved member access', async () => {
+test('clearing request history removes eligible records and archives the clear without changing approved access', async () => {
   const {clearViewerRequestHistory, canContinueWithApprovedSession, documents} = createViewerAccess();
   const addAccess = (uid, phone, status) => {
     documents.set(`viewerAccess/${uid}`, {
@@ -222,7 +264,7 @@ test('clearing request history removes pending and rejected history without chan
     {kind: 'access', request: revoked},
     {kind: 'recovery', request: {uid: 'recovery-pending', status: 'pending'}},
     {kind: 'recovery', request: {uid: 'recovery-restored', status: 'restored'}}
-  ]);
+  ], 'owner');
 
   assert.equal(cleared, 4);
   for (const [uid, phone] of [
@@ -242,4 +284,76 @@ test('clearing request history removes pending and rejected history without chan
   assert.equal(canContinueWithApprovedSession('approved-member', documents.get('viewerAccess/approved-member'), '+919876543212'), true);
   assert.equal(documents.get('viewerAccess/revoked-member').status, 'revoked');
   assert.equal(documents.get('viewerPhoneIndex/+919876543213').status, 'revoked');
+  assert.equal([...documents.values()].filter(item => item.action === 'history_cleared').length, 4);
+});
+
+test('owner decisions approve, reject and revoke while preserving transition history', async () => {
+  const {decideViewerAccess, documents} = createViewerAccess();
+  const addPending = (uid, phone) => {
+    const request = {uid, fullName: uid, normalizedMobileNumber: phone, status: 'pending', preferredLanguage: 'en'};
+    documents.set(`viewerAccess/${uid}`, request);
+    documents.set(`viewerPhoneIndex/${phone}`, {uid, status: 'pending'});
+    documents.set(`viewerPhoneStatus/${phone}`, {status: 'pending'});
+    return request;
+  };
+  const approve = addPending('approval-test', '+919876543210');
+  await decideViewerAccess(approve, 'approved', 'owner');
+  assert.equal(documents.get('viewerAccess/approval-test').status, 'approved');
+  assert.equal(documents.get('viewerPhoneIndex/+919876543210').status, 'approved');
+  await decideViewerAccess(documents.get('viewerAccess/approval-test'), 'revoked', 'owner');
+  assert.equal(documents.get('viewerAccess/approval-test').status, 'revoked');
+  assert.equal(documents.get('viewerPhoneIndex/+919876543210').status, 'revoked');
+
+  const reject = addPending('reject-test', '+919876543211');
+  await decideViewerAccess(reject, 'rejected', 'owner');
+  assert.equal(documents.get('viewerAccess/reject-test').status, 'rejected');
+  assert.deepEqual(
+    [...documents.values()].filter(item => item.uid === 'approval-test' || item.uid === 'reject-test').map(item => item.action).filter(Boolean).sort(),
+    ['approved', 'rejected', 'revoked']
+  );
+});
+
+test('Delete Account removes only eligible viewer access and device records, retaining a deletion audit and Auth identity', async () => {
+  const {deleteViewerAccount, documents} = createViewerAccess();
+  const member = {
+    uid: 'deleted-viewer',
+    fullName: 'Deleted Viewer',
+    normalizedMobileNumber: '+919876543210',
+    status: 'approved',
+    preferredLanguage: 'en',
+    approvalDate: 'approval-time'
+  };
+  documents.set('viewerAccess/deleted-viewer', member);
+  documents.set('viewerPhoneIndex/+919876543210', {uid: member.uid, status: 'approved'});
+  documents.set('viewerPhoneStatus/+919876543210', {status: 'approved'});
+  documents.set('users/deleted-viewer', {projectId: 'ksk', role: 'viewer', fullName: member.fullName});
+  documents.set('viewerRecoveryRequests/deleted-viewer', {uid: member.uid, normalizedMobileNumber: member.normalizedMobileNumber, status: 'rejected'});
+  documents.set('users/deleted-viewer/devices/device-token', {token: 'private'});
+  documents.set('projects/ksk/login_history/session-1', {userId: member.uid, role: 'viewer'});
+  documents.set('projects/ksk/payments/keep-project-record', {amount: 100});
+
+  const result = await deleteViewerAccount(member, 'owner');
+
+  assert.equal(result.authAccountDeleted, false);
+  assert.equal(result.deviceHistoryCount, 1);
+  for (const path of [
+    'viewerAccess/deleted-viewer',
+    'viewerPhoneIndex/+919876543210',
+    'viewerPhoneStatus/+919876543210',
+    'viewerRecoveryRequests/deleted-viewer',
+    'users/deleted-viewer',
+    'users/deleted-viewer/devices/device-token',
+    'projects/ksk/login_history/session-1'
+  ]) assert.equal(documents.has(path), false, `${path} should be removed`);
+  assert.equal(documents.has('projects/ksk/payments/keep-project-record'), true);
+  assert.equal(documents.get('viewerAccountDeletions/deleted-viewer').actorUid, 'owner');
+  assert.equal([...documents.values()].some(item => item.action === 'account_deleted' && item.previousStatus === 'approved'), true);
+});
+
+test('Delete Account refuses the owner UID', async () => {
+  const {deleteViewerAccount} = createViewerAccess();
+  await assert.rejects(
+    deleteViewerAccount({uid: 'owner', fullName: 'Owner', status: 'approved'}, 'owner'),
+    /owner account cannot be deleted/i
+  );
 });

@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDoc, onSnapshot, query, runTransaction, serverTimestamp, updateDoc, where, setDoc, writeBatch
+  collection, doc, getDoc, getDocs, limit, onSnapshot, query, runTransaction, serverTimestamp, updateDoc, where, writeBatch
 } from 'firebase/firestore';
 import {db} from '../firebase';
 
@@ -39,11 +39,25 @@ export type ViewerRecoveryRequest = {
 export type ViewerRequestHistoryItem =
   | {kind: 'access'; request: ViewerAccessRequest}
   | {kind: 'recovery'; request: ViewerRecoveryRequest};
+export type ViewerAccessHistoryEntry = {
+  id: string;
+  uid: string;
+  fullName: string;
+  normalizedMobileNumber: string;
+  action: 'registered' | 'approved' | 'rejected' | 'revoked' | 'recovery_requested' | 'recovery_rejected' | 'recovery_restored' | 'history_cleared' | 'account_deleted';
+  status: string;
+  previousStatus?: string;
+  actorUid: string;
+  createdAt?: any;
+  installationId?: string;
+};
 
 const accessPath = (uid: string) => doc(db!, 'viewerAccess', uid);
 const phonePath = (phone: string) => doc(db!, 'viewerPhoneIndex', phone);
 const phoneStatusPath = (phone: string) => doc(db!, 'viewerPhoneStatus', phone);
 const recoveryPath = (uid: string) => doc(db!, 'viewerRecoveryRequests', uid);
+const accountDeletionPath = (uid: string) => doc(db!, 'viewerAccountDeletions', uid);
+const historyCollection = () => collection(db!, 'viewerAccessHistory');
 
 export function normalizePhoneNumber(value: string): string {
   const trimmed = value.trim();
@@ -90,10 +104,7 @@ export async function registerViewerRequest(
     const requestRef = accessPath(uid);
     const phoneRef = phonePath(normalizedMobileNumber);
     const phoneStatusRef = phoneStatusPath(normalizedMobileNumber);
-    const [existingRequest, phoneStatus] = await Promise.all([
-      transaction.get(requestRef),
-      transaction.get(phoneStatusRef)
-    ]);
+    const existingRequest = await transaction.get(requestRef);
 
     if (existingRequest.exists()) {
       const request = existingRequest.data() as ViewerAccessRequest;
@@ -101,15 +112,6 @@ export async function registerViewerRequest(
         throw new Error('This authenticated session is already linked to another mobile number.');
       }
       return {uid, status: request.status, created: false, currentSession: true};
-    }
-
-    if (phoneStatus.exists()) {
-      return {
-        uid: '',
-        status: (phoneStatus.data() as {status: ViewerAccessStatus}).status,
-        created: false,
-        currentSession: false
-      };
     }
 
     const timestamp = serverTimestamp();
@@ -133,6 +135,15 @@ export async function registerViewerRequest(
       createdAt: timestamp,
       updatedAt: timestamp
     });
+    transaction.set(doc(historyCollection()), {
+      uid,
+      fullName: name,
+      normalizedMobileNumber,
+      action: 'registered',
+      status: 'pending',
+      actorUid: uid,
+      createdAt: timestamp
+    });
     return {uid, status: 'pending' as const, created: true, currentSession: true};
   });
 }
@@ -154,13 +165,7 @@ export async function lookupViewerAccessByPhone(
       return {uid: authenticatedUid!, status: request.status, request, currentSession: true};
     }
   }
-  const phoneStatus = await getDoc(phoneStatusPath(normalizedMobileNumber));
-  if (!phoneStatus.exists()) return null;
-  return {
-    uid: '',
-    status: (phoneStatus.data() as {status: ViewerAccessStatus}).status,
-    currentSession: false
-  };
+  return null;
 }
 
 export async function requestViewerRecovery(uid: string, phone: string) {
@@ -172,34 +177,18 @@ export async function requestViewerRecovery(uid: string, phone: string) {
   const database = db;
 
   return runTransaction(database, async transaction => {
-    const phoneStatusRef = phoneStatusPath(normalizedMobileNumber);
     const recoveryRef = recoveryPath(uid);
     const requestRef = accessPath(uid);
-    const [phoneStatus, recovery, currentRequest] = await Promise.all([
-      transaction.get(phoneStatusRef),
+    const [recovery, currentRequest] = await Promise.all([
       transaction.get(recoveryRef),
       transaction.get(requestRef)
     ]);
-    if (!phoneStatus.exists()) {
-      if (currentRequest.exists()) {
-        const existing = currentRequest.data() as ViewerAccessRequest;
-        if (existing.normalizedMobileNumber === normalizedMobileNumber && existing.status === 'approved') {
-          return {status: 'approved' as const, created: false, currentSession: true};
-        }
-      }
-      return {status: 'not-found' as const, created: false, currentSession: false};
-    }
-
-    const status = (phoneStatus.data() as {status: ViewerAccessStatus}).status;
     if (currentRequest.exists()) {
       const current = currentRequest.data() as ViewerAccessRequest;
       if (current.normalizedMobileNumber === normalizedMobileNumber) {
         return {status: current.status, created: false, currentSession: true};
       }
-    }
-    if (status !== 'approved') return {status, created: false, currentSession: false};
-    if (currentRequest.exists()) {
-      throw new Error('This session already has a family access record. Contact the owner for account recovery.');
+      throw new Error('This session already has a family access record. Contact the project owner for account recovery.');
     }
     if (recovery.exists()) {
       const existing = recovery.data() as ViewerRecoveryRequest;
@@ -214,6 +203,15 @@ export async function requestViewerRecovery(uid: string, phone: string) {
       uid,
       normalizedMobileNumber,
       status: 'pending',
+      createdAt: timestamp
+    });
+    transaction.set(doc(historyCollection()), {
+      uid,
+      fullName: '',
+      normalizedMobileNumber,
+      action: 'recovery_requested',
+      status: 'pending',
+      actorUid: uid,
       createdAt: timestamp
     });
     return {status: 'pending' as const, created: true, currentSession: false};
@@ -328,12 +326,42 @@ export function subscribeViewerRecoveryRequests(
   }, onError);
 }
 
-export async function clearViewerRequestHistory(items: ViewerRequestHistoryItem[]): Promise<number> {
+export function subscribeViewerAccessHistory(
+  onChange: (events: ViewerAccessHistoryEntry[]) => void,
+  onError: (error: Error) => void
+) {
+  if (!db) {
+    onError(new Error('Firebase is not configured.'));
+    return () => {};
+  }
+  return onSnapshot(historyCollection(), snapshot => {
+    const events = snapshot.docs.map(item => ({...item.data(), id: item.id} as ViewerAccessHistoryEntry));
+    events.sort((a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt));
+    onChange(events);
+  }, onError);
+}
+
+export async function clearViewerAccessHistory(ids: string[]): Promise<number> {
+  if (!db) throw new Error('Firebase is not configured.');
+  let clearedCount = 0;
+  for (let offset = 0; offset < ids.length; offset += 450) {
+    const batch = writeBatch(db);
+    ids.slice(offset, offset + 450).forEach(id => batch.delete(doc(db!, 'viewerAccessHistory', id)));
+    await batch.commit();
+    clearedCount += Math.min(450, ids.length - offset);
+  }
+  return clearedCount;
+}
+
+export async function clearViewerRequestHistory(
+  items: ViewerRequestHistoryItem[],
+  ownerUid: string
+): Promise<number> {
   if (!db) throw new Error('Firebase is not configured.');
 
   let clearedCount = 0;
-  for (let offset = 0; offset < items.length; offset += 100) {
-    const chunk = items.slice(offset, offset + 100);
+  for (let offset = 0; offset < items.length; offset += 5) {
+    const chunk = items.slice(offset, offset + 5);
     clearedCount += await runTransaction(db, async transaction => {
       const entries = chunk.map(item => {
         const requestRef = item.kind === 'access' ? accessPath(item.request.uid) : recoveryPath(item.request.uid);
@@ -361,6 +389,17 @@ export async function clearViewerRequestHistory(items: ViewerRequestHistoryItem[
         const currentRequest = requestSnapshot.data() as ViewerAccessRequest | ViewerRecoveryRequest;
         if (item.kind === 'recovery') {
           if (!['pending', 'rejected', 'restored'].includes(currentRequest.status)) continue;
+          const recovery = currentRequest as ViewerRecoveryRequest;
+          transaction.set(doc(historyCollection()), {
+            uid: recovery.uid,
+            fullName: '',
+            normalizedMobileNumber: recovery.normalizedMobileNumber,
+            action: 'history_cleared',
+            status: 'cleared',
+            previousStatus: recovery.status,
+            actorUid: ownerUid,
+            createdAt: serverTimestamp()
+          });
           transaction.delete(requestRef);
           chunkClearedCount += 1;
           continue;
@@ -368,6 +407,16 @@ export async function clearViewerRequestHistory(items: ViewerRequestHistoryItem[
 
         const accessRequest = currentRequest as ViewerAccessRequest;
         if (accessRequest.legacy || !['pending', 'rejected'].includes(accessRequest.status)) continue;
+        transaction.set(doc(historyCollection()), {
+          uid: accessRequest.uid,
+          fullName: accessRequest.fullName,
+          normalizedMobileNumber: accessRequest.normalizedMobileNumber,
+          action: 'history_cleared',
+          status: 'cleared',
+          previousStatus: accessRequest.status,
+          actorUid: ownerUid,
+          createdAt: serverTimestamp()
+        });
         transaction.delete(requestRef);
         if (indexSnapshot?.exists()) {
           const index = indexSnapshot.data() as ViewerPhoneIndex;
@@ -389,6 +438,112 @@ export async function clearViewerRequestHistory(items: ViewerRequestHistoryItem[
     });
   }
   return clearedCount;
+}
+
+export async function deleteViewerAccount(request: ViewerAccessRequest, ownerUid: string) {
+  if (!db) throw new Error('Firebase is not configured.');
+  if (!ownerUid || request.uid === ownerUid) throw new Error('The owner account cannot be deleted here.');
+  const database = db;
+  const accountRef = accessPath(request.uid);
+  const profileRef = doc(database, 'users', request.uid);
+  const [accessSnapshot, profileSnapshot] = await Promise.all([
+    getDoc(accountRef),
+    getDoc(profileRef)
+  ]);
+  const access = accessSnapshot.exists() ? accessSnapshot.data() as ViewerAccessRequest : null;
+  const profile = profileSnapshot.exists() ? profileSnapshot.data() : null;
+  if (profile?.projectId === 'ksk' && profile?.role === 'owner') {
+    throw new Error('The owner account cannot be deleted here.');
+  }
+  if (!access && !(profile?.projectId === 'ksk' && profile?.role === 'viewer')) {
+    throw new Error('This viewer account no longer exists.');
+  }
+
+  const deviceQuery = collection(database, 'users', request.uid, 'devices');
+  for (;;) {
+    const devices = await getDocs(query(deviceQuery, limit(450)));
+    if (devices.empty) break;
+    const batch = writeBatch(database);
+    devices.docs.forEach(device => batch.delete(device.ref));
+    await batch.commit();
+  }
+
+  await runTransaction(database, async transaction => {
+    const [currentAccessSnapshot, currentProfileSnapshot, recoverySnapshot] = await Promise.all([
+      transaction.get(accountRef),
+      transaction.get(profileRef),
+      transaction.get(recoveryPath(request.uid))
+    ]);
+    const currentAccess = currentAccessSnapshot.exists()
+      ? currentAccessSnapshot.data() as ViewerAccessRequest
+      : null;
+    const currentProfile = currentProfileSnapshot.exists() ? currentProfileSnapshot.data() : null;
+    if (currentProfile?.projectId === 'ksk' && currentProfile?.role === 'owner') {
+      throw new Error('The owner account cannot be deleted here.');
+    }
+    if (!currentAccess && !(currentProfile?.projectId === 'ksk' && currentProfile?.role === 'viewer')) {
+      throw new Error('This viewer account no longer exists.');
+    }
+    const deletionRef = accountDeletionPath(request.uid);
+    if ((await transaction.get(deletionRef)).exists()) {
+      throw new Error('This viewer account has already been deleted.');
+    }
+
+    const phone = currentAccess?.normalizedMobileNumber
+      ? normalizePhoneNumber(currentAccess.normalizedMobileNumber)
+      : '';
+    const indexRef = phone && isValidNormalizedPhone(phone) ? phonePath(phone) : null;
+    const statusRef = phone && isValidNormalizedPhone(phone) ? phoneStatusPath(phone) : null;
+    const [indexSnapshot, statusSnapshot] = indexRef && statusRef
+      ? await Promise.all([transaction.get(indexRef), transaction.get(statusRef)])
+      : [null, null];
+
+    transaction.set(doc(historyCollection()), {
+      uid: request.uid,
+      fullName: currentAccess?.fullName || String(currentProfile?.fullName || currentProfile?.displayName || request.fullName),
+      normalizedMobileNumber: phone,
+      action: 'account_deleted',
+      status: 'deleted',
+      previousStatus: currentAccess?.status || 'approved',
+      actorUid: ownerUid,
+      createdAt: serverTimestamp()
+    });
+    transaction.set(deletionRef, {
+      uid: request.uid,
+      actorUid: ownerUid,
+      createdAt: serverTimestamp()
+    });
+    if (currentAccessSnapshot.exists()) transaction.delete(accountRef);
+    if (currentProfileSnapshot.exists() && currentProfile?.projectId === 'ksk' && currentProfile?.role === 'viewer') {
+      transaction.delete(profileRef);
+    }
+    if (recoverySnapshot.exists()) transaction.delete(recoveryPath(request.uid));
+    const indexBelongsToRequest = !indexSnapshot?.exists()
+      || (indexSnapshot.data() as ViewerPhoneIndex).uid === request.uid;
+    if (indexSnapshot?.exists() && indexBelongsToRequest) {
+      transaction.delete(indexRef!);
+    }
+    if (statusSnapshot?.exists() && indexBelongsToRequest) transaction.delete(statusRef!);
+  });
+
+  let deviceHistoryCount = 0;
+  const sessions = collection(database, 'projects', 'ksk', 'login_history');
+  for (;;) {
+    const snapshot = await getDocs(query(sessions, where('userId', '==', request.uid), limit(450)));
+    if (snapshot.empty) break;
+    const batch = writeBatch(database);
+    snapshot.docs.forEach(item => batch.delete(item.ref));
+    await batch.commit();
+    deviceHistoryCount += snapshot.size;
+  }
+  return {authAccountDeleted: false, deviceHistoryCount};
+}
+
+function timestampMillis(value: any): number {
+  if (value?.toMillis) return value.toMillis();
+  if (value?.toDate) return value.toDate().getTime();
+  const parsed = new Date(value || 0).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export function subscribeLegacyViewers(
@@ -453,6 +608,15 @@ export async function decideViewerAccess(
   }
   const batch = writeBatch(db);
   batch.update(accessPath(request.uid), changes);
+  batch.set(doc(historyCollection()), {
+    uid: request.uid,
+    fullName: request.fullName,
+    normalizedMobileNumber,
+    action,
+    status: action,
+    actorUid: approverUid,
+    createdAt: serverTimestamp()
+  });
   const statusChanges = {status: action, updatedAt: serverTimestamp()};
   if (phoneStatus.exists()) batch.update(statusReference, statusChanges);
   else batch.set(statusReference, {
@@ -497,6 +661,15 @@ export async function decideViewerRecovery(
         decidedBy: ownerUid,
         decisionAt: serverTimestamp(),
         updatedAt: serverTimestamp()
+      });
+      transaction.set(doc(historyCollection()), {
+        uid: request.uid,
+        fullName: '',
+        normalizedMobileNumber: currentRecovery.normalizedMobileNumber,
+        action: 'recovery_rejected',
+        status: 'rejected',
+        actorUid: ownerUid,
+        createdAt: serverTimestamp()
       });
       return;
     }
@@ -556,13 +729,23 @@ export async function decideViewerRecovery(
       decisionAt: timestamp,
       updatedAt: timestamp
     });
+    transaction.set(doc(historyCollection()), {
+      uid: request.uid,
+      fullName: oldAccess.fullName,
+      normalizedMobileNumber: currentRecovery.normalizedMobileNumber,
+      action: 'recovery_restored',
+      status: 'approved',
+      actorUid: ownerUid,
+      createdAt: timestamp
+    });
   });
 }
 
 export async function revokeLegacyViewer(request: ViewerAccessRequest, ownerUid: string) {
   if (!db) throw new Error('Firebase is not configured.');
   if (!request.legacy) throw new Error('This is not a legacy viewer account.');
-  await setDoc(accessPath(request.uid), {
+  const batch = writeBatch(db);
+  batch.set(accessPath(request.uid), {
     uid: request.uid,
     fullName: request.fullName,
     normalizedMobileNumber: '',
@@ -577,4 +760,14 @@ export async function revokeLegacyViewer(request: ViewerAccessRequest, ownerUid:
     decisionNote: 'Legacy viewer access revoked by owner.',
     updatedAt: serverTimestamp()
   });
+  batch.set(doc(historyCollection()), {
+    uid: request.uid,
+    fullName: request.fullName,
+    normalizedMobileNumber: '',
+    action: 'revoked',
+    status: 'revoked',
+    actorUid: ownerUid,
+    createdAt: serverTimestamp()
+  });
+  await batch.commit();
 }
