@@ -43,6 +43,14 @@ jobs:
         run: yarn test
       - name: Run Firestore rules tests
         run: npx --yes firebase-tools emulators:exec --only firestore,auth --project demo-ksk "node --test tests/firestoreRules.test.cjs tests/authFlow.test.cjs"
+      - name: Deploy Firestore rules
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KSK_HOUSE_CONSTRUCTION }}
+        run: |
+          credential_file="$RUNNER_TEMP/firebase-service-account.json"
+          trap 'rm -f "$credential_file"' EXIT
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$credential_file"
+          GOOGLE_APPLICATION_CREDENTIALS="$credential_file" npx --yes firebase-tools deploy --only firestore:rules --project ksk-house-construction
       - name: Export website
         run: npx expo export --platform web
       - name: Deploy to Firebase Hosting
