@@ -640,7 +640,9 @@ export default function FamilyViewer({onOwnerLogin, onLanguageChange, onBeforeSi
       if (!active) return;
       setAccess(request);
       setLegacyViewer(false);
-      setMobileConfirmed(request?.status === 'approved');
+      setMobileConfirmed(!!request && canContinueWithApprovedSession(
+        user.uid, request, request.normalizedMobileNumber
+      ));
       const savedLanguage = request?.preferredLanguage;
       if (savedLanguage === 'en' || savedLanguage === 'ta') {
         setLanguage(savedLanguage);

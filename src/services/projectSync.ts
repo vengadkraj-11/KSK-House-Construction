@@ -1,5 +1,5 @@
 import {
-  collection, doc, documentId, getDoc, getDocs, limit, onSnapshot, orderBy, query,
+  collection, doc, documentId, getDoc, getDocs, getDocsFromServer, limit, onSnapshot, orderBy, query,
   serverTimestamp, setDoc, updateDoc, where, writeBatch
 } from 'firebase/firestore';
 
@@ -234,7 +234,17 @@ export async function registerDevice(
 
 
 // Clear activity history using Firestore owner-only delete rules.
-// Worksheets, expenses, bills and attachments are not deleted.
+// Login/device history and project records are outside this collection.
+export class ActivityHistoryClearError extends Error {
+  constructor(readonly deletedCount: number, cause: unknown) {
+    const detail = cause && typeof cause === 'object' && 'message' in cause
+      ? String((cause as {message: unknown}).message)
+      : String(cause || 'Unknown Firestore error.');
+    super(detail);
+    this.name = 'ActivityHistoryClearError';
+  }
+}
+
 export async function clearActivityHistory(): Promise<number> {
   if (!db) throw new Error('Firebase is not configured.');
 
@@ -243,20 +253,20 @@ export async function clearActivityHistory(): Promise<number> {
   );
 
   let deletedCount = 0;
+  try {
+    while (true) {
+      const snapshot = await getDocsFromServer(
+        query(activityCollection, limit(450))
+      );
+      if (snapshot.empty) break;
 
-  while (true) {
-    const snapshot = await getDocs(
-      query(activityCollection, limit(450))
-    );
-
-    if (snapshot.empty) break;
-
-    const batch = writeBatch(db);
-
-    snapshot.docs.forEach(item => batch.delete(item.ref));
-
-    await batch.commit();
-    deletedCount += snapshot.size;
+      const batch = writeBatch(db);
+      snapshot.docs.forEach(item => batch.delete(item.ref));
+      await batch.commit();
+      deletedCount += snapshot.size;
+    }
+  } catch (error) {
+    throw new ActivityHistoryClearError(deletedCount, error);
   }
 
   return deletedCount;

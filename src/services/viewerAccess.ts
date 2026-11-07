@@ -11,6 +11,8 @@ export type ViewerAccessRequest = {
   normalizedMobileNumber: string;
   status: ViewerAccessStatus;
   preferredLanguage: ViewerLanguage;
+  projectId?: 'ksk';
+  role?: 'viewer';
   registeredAt?: any;
   approvalDate?: any;
   approverUid?: string;
@@ -81,6 +83,9 @@ export function canContinueWithApprovedSession(
     authenticatedUid &&
     request?.uid === authenticatedUid &&
     request.status === 'approved' &&
+    !!request.approvalDate &&
+    (request.projectId === undefined || request.projectId === 'ksk') &&
+    (request.role === undefined || request.role === 'viewer') &&
     normalizePhoneNumber(mobileNumber) === request.normalizedMobileNumber
   );
 }
@@ -187,6 +192,8 @@ export async function addApprovedViewer(
       normalizedMobileNumber,
       status: 'approved',
       preferredLanguage,
+      projectId: 'ksk',
+      role: 'viewer',
       manualInvite: true,
       registeredAt: timestamp,
       createdAt: timestamp,
@@ -665,9 +672,13 @@ export async function decideViewerAccess(
   if (action === 'approved') {
     changes.approverUid = approverUid;
     changes.approvalDate = serverTimestamp();
+    changes.projectId = 'ksk';
+    changes.role = 'viewer';
     changes.revokedBy = null;
     changes.revokedAt = null;
   } else if (action === 'revoked') {
+    changes.projectId = 'ksk';
+    changes.role = 'viewer';
     changes.revokedBy = approverUid;
     changes.revokedAt = serverTimestamp();
   }
@@ -789,6 +800,8 @@ export async function decideViewerRecovery(
       normalizedMobileNumber: currentRecovery.normalizedMobileNumber,
       status: 'approved',
       preferredLanguage: oldAccess.preferredLanguage,
+      projectId: 'ksk',
+      role: 'viewer',
       registeredAt: timestamp,
       createdAt: timestamp,
       approvalDate: oldAccess.approvalDate,

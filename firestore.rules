@@ -53,7 +53,9 @@ service cloud.firestore {
         && projectId == 'ksk'
         && exists(accessPath)
         && get(accessPath).data.get('status', null) == 'approved'
-        && get(accessPath).data.get('approvalDate', null) is timestamp;
+        && get(accessPath).data.get('approvalDate', null) is timestamp
+        && get(accessPath).data.get('projectId', 'ksk') == projectId
+        && get(accessPath).data.get('role', 'viewer') == 'viewer';
     }
     function hasLegacyProjectAccess(projectId) {
       let accessPath = viewerAccessPath(request.auth.uid);
@@ -117,11 +119,11 @@ service cloud.firestore {
         && uid != request.auth.uid
         && data.keys().hasAll([
           'uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage',
-          'manualInvite', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'
+          'projectId', 'role', 'manualInvite', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'
         ])
         && data.keys().hasOnly([
           'uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage',
-          'manualInvite', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'
+          'projectId', 'role', 'manualInvite', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'
         ])
         && data.get('uid', null) == uid
         && data.get('fullName', null) is string
@@ -130,6 +132,8 @@ service cloud.firestore {
         && phone.matches('^\\+[1-9][0-9]{7,14}$')
         && data.get('status', null) == 'approved'
         && data.get('preferredLanguage', null) in ['en', 'ta']
+        && data.get('projectId', null) == 'ksk'
+        && data.get('role', null) == 'viewer'
         && data.get('manualInvite', null) == true
         && data.get('registeredAt', null) == request.time
         && data.get('createdAt', null) == request.time
@@ -196,19 +200,24 @@ service cloud.firestore {
       let approving = before.get('status', null) in ['pending', 'revoked']
         && after.get('status', null) == 'approved'
         && after.get('approvalDate', null) == request.time
-        && after.get('approverUid', null) == request.auth.uid;
+        && after.get('approverUid', null) == request.auth.uid
+        && after.get('projectId', null) == 'ksk'
+        && after.get('role', null) == 'viewer';
       let rejecting = before.get('status', null) == 'pending'
         && after.get('status', null) == 'rejected';
       let revoking = before.get('status', null) == 'approved'
         && after.get('status', null) == 'revoked'
         && after.get('revokedAt', null) == request.time
-        && after.get('revokedBy', null) == request.auth.uid;
+        && after.get('revokedBy', null) == request.auth.uid
+        && after.get('projectId', null) == 'ksk'
+        && after.get('role', null) == 'viewer';
       return isOwner('ksk')
         && before.get('uid', null) == uid
         && after.get('uid', null) == uid
         && after.diff(before).affectedKeys().hasOnly([
           'status', 'approvalDate', 'approverUid', 'decisionAt',
-          'decidedBy', 'decisionNote', 'revokedAt', 'revokedBy', 'updatedAt'
+          'decidedBy', 'decisionNote', 'revokedAt', 'revokedBy', 'updatedAt',
+          'projectId', 'role'
         ])
         && after.get('decisionAt', null) == request.time
         && after.get('decidedBy', null) == request.auth.uid
@@ -385,13 +394,15 @@ service cloud.firestore {
         && getAfter(indexPath).data.get('status', null) == 'approved'
         && existsAfter(oldAccessPath)
         && getAfter(oldAccessPath).data.get('status', null) == 'revoked'
-        && data.keys().hasAll(['uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'])
-        && data.keys().hasOnly(['uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'])
+        && data.keys().hasAll(['uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage', 'projectId', 'role', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'])
+        && data.keys().hasOnly(['uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage', 'projectId', 'role', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'])
         && data.get('uid', null) == uid
         && data.get('fullName', null) == get(oldAccessPath).data.get('fullName', null)
         && data.get('normalizedMobileNumber', null) == phone
         && data.get('status', null) == 'approved'
         && data.get('preferredLanguage', null) == get(oldAccessPath).data.get('preferredLanguage', null)
+        && data.get('projectId', null) == 'ksk'
+        && data.get('role', null) == 'viewer'
         && data.get('approvalDate', null) == get(oldAccessPath).data.get('approvalDate', null)
         && data.get('approverUid', null) == get(oldAccessPath).data.get('approverUid', null)
         && data.get('registeredAt', null) == request.time

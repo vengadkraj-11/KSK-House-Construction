@@ -38,6 +38,9 @@ test('preferred language persists across owner and family website visits', () =>
 
 test('approved viewer UID resolves to viewer role and revoked access never falls back to legacy membership', () => {
   assert.equal(resolveProjectRole(null, {uid: 'viewer-uid', status: 'approved', approvalDate: 'approval'}, true, 'viewer-uid'), 'viewer');
+  assert.equal(resolveProjectRole(null, {uid: 'viewer-uid', projectId: 'ksk', role: 'viewer', status: 'approved', approvalDate: 'approval'}, true, 'viewer-uid'), 'viewer');
+  assert.equal(resolveProjectRole(null, {uid: 'viewer-uid', projectId: 'other', role: 'viewer', status: 'approved', approvalDate: 'approval'}, true, 'viewer-uid'), null);
+  assert.equal(resolveProjectRole(null, {uid: 'viewer-uid', projectId: 'ksk', role: 'owner', status: 'approved', approvalDate: 'approval'}, true, 'viewer-uid'), null);
   assert.equal(resolveProjectRole(null, {uid: 'other-uid', status: 'approved', approvalDate: 'approval'}, true, 'viewer-uid'), null);
   assert.equal(resolveProjectRole(null, {uid: 'viewer-uid', status: 'approved'}, true, 'viewer-uid'), null);
   assert.equal(resolveProjectRole({projectId: 'ksk', role: 'viewer'}, null, false, 'viewer-uid'), 'viewer');
@@ -76,7 +79,7 @@ test('signed-out website offers separate sign-in and sign-up with a discreet own
   assert.match(viewer, /Your registration is awaiting owner approval\./);
   assert.match(viewer, /lookupViewerAccessByPhone\(requester\.uid, normalizedPhone\)/);
   assert.match(viewer, /requestViewerRecovery\(requester\.uid, normalizedPhone\)/);
-  assert.match(viewer, /setMobileConfirmed\(request\?\.status === 'approved'\)/);
+  assert.match(viewer, /setMobileConfirmed\(!!request && canContinueWithApprovedSession\(/);
   assert.doesNotMatch(viewer, /setMobileConfirmed\(false\);\s*\},\s*\[user\?\.uid,\s*access\?\.status/);
   assert.match(viewer, /if \(recovery\.status === 'pending'\) setMessage/);
 });
@@ -88,7 +91,7 @@ test('a saved approved family session restores directly to the dashboard without
   const accessListener = viewer.indexOf("subscribeViewerRequest(user.uid");
   assert.ok(persistence >= 0 && persistence < authObserver, 'Local Auth persistence must be configured before restoring the saved user.');
   assert.ok(authObserver < accessListener, 'The saved Auth user must be followed by membership resolution.');
-  assert.match(viewer, /setMobileConfirmed\(request\?\.status === 'approved'\)/);
+  assert.match(viewer, /setMobileConfirmed\(!!request && canContinueWithApprovedSession\(/);
   assert.match(viewer, /const canRead = !!user && \(legacyViewer \|\| \(access\?\.status === 'approved' && mobileConfirmed\)\)/);
   assert.match(viewer, /if \(user && accessMode === 'home' && \(!accessChecked \|\| !legacyCheckComplete\)\)/);
   assert.match(viewer, /return <FamilyData[\s\S]*?sheetsLoading \|\| !\(/);

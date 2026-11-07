@@ -54,6 +54,10 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal((await request('projects/ksk/login_history/viewer-session','owner','DELETE')).status,200,'The owner can clear a selected device history record.');
   assert.equal((await request('projects/ksk/login_history/viewer-session','owner')).status,404,'Selected device history remains cleared after refresh.');
   assert.equal((await request('projects/ksk/activity/activity1','viewer')).status,403);
+  assert.equal((await request('projects/ksk/activity/activity1','viewer','DELETE')).status,403,'Viewers cannot clear owner activity history.');
+  assert.equal((await request('projects/ksk/activity/activity1','owner','DELETE')).status,200,'Only the owner can clear project activity history.');
+  assert.equal((await request('projects/ksk/activity/activity1','owner')).status,404,'Activity history deletion is visible after refresh.');
+  assert.equal((await request('projects/ksk/payments/payment1','owner')).status,200,'Clearing activity does not remove project payment records.');
   assert.equal((await request('projects/ksk/login_history/owner-session','viewer')).status,403);
   assert.equal((await request('projects/ksk/login_history/owner-session','owner')).status,200);
   assert.equal((await request('users/viewer/devices/device-token','viewer')).status,200,'A legacy viewer may read only their own device registration.');
@@ -191,6 +195,10 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
     const phoneIndex=`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${phone}`;
     const phoneStatus=`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${phone}`;
     const accessFields={status:stringValue(status),decidedBy:stringValue('owner'),decisionNote:stringValue('Owner decision')};
+    if(status==='approved'||status==='revoked'){
+      accessFields.projectId=stringValue('ksk');
+      accessFields.role=stringValue('viewer');
+    }
     const accessTransforms=[{fieldPath:'decisionAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}];
     if(status==='approved'){
       accessFields.approverUid=stringValue('owner');
@@ -238,6 +246,8 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal((await request('projects/ksk/bills/payment1/images/receipt1','password-viewer','GET',undefined,undefined,'password')).status,403,'Pending registrants cannot read attachments.');
   const selfApproval=await commit('password-viewer',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/password-viewer`,fields:{status:stringValue('approved')}},updateMask:{fieldPaths:['status']}}],undefined,'password');
   assert.equal(selfApproval.status,403,'Viewers cannot change their own approval status.');
+  const selfRoleChange=await commit('password-viewer',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/password-viewer`,fields:{role:stringValue('owner'),projectId:stringValue('ksk')}},updateMask:{fieldPaths:['role','projectId']}}],undefined,'password');
+  assert.equal(selfRoleChange.status,403,'Viewers cannot change their own membership role or project.');
   const typedNumberOnly=await request('projects/ksk/sheets/sheet1','different-user','GET',undefined,phone,'password');
   assert.equal(typedNumberOnly.status,403,'Typing an approved mobile number does not authenticate the approved account.');
   const unsupportedProvider=await commit('custom-viewer',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/custom-viewer`,fields:{uid:stringValue('custom-viewer'),fullName:stringValue('Custom Viewer'),normalizedMobileNumber:stringValue('+15550000000'),status:stringValue('pending'),preferredLanguage:stringValue('en')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
@@ -250,7 +260,7 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
     {update:{name:invitePath,fields:{
       uid:stringValue(inviteUid),fullName:stringValue('Manual Invite'),
       normalizedMobileNumber:stringValue(invitePhone),status:stringValue('approved'),
-      preferredLanguage:stringValue('en'),manualInvite:{booleanValue:true},
+      preferredLanguage:stringValue('en'),projectId:stringValue('ksk'),role:stringValue('viewer'),manualInvite:{booleanValue:true},
       approverUid:stringValue('owner')
     }},currentDocument:{exists:false},updateTransforms:[
       {fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},
@@ -273,7 +283,7 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const viewerInviteAttempt=await commit('unverified-invite-user',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/manual-forged-invite`,fields:{
     uid:stringValue('manual-forged-invite'),fullName:stringValue('Forged Invite'),
     normalizedMobileNumber:stringValue('+15550004323'),status:stringValue('approved'),
-    preferredLanguage:stringValue('en'),manualInvite:{booleanValue:true},
+    preferredLanguage:stringValue('en'),projectId:stringValue('ksk'),role:stringValue('viewer'),manualInvite:{booleanValue:true},
     approverUid:stringValue('unverified-invite-user')
   }},currentDocument:{exists:false},updateTransforms:[
     {fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},
@@ -285,8 +295,11 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const approved=await decideViewer('password-viewer',phone,'approved');
   assert.equal(approved.status,200,await approved.text());
   const approvedRequest=await request('viewerAccess/password-viewer','password-viewer','GET',undefined,undefined,'password');
-  const approvalSeconds=Math.floor(Date.parse((await approvedRequest.json()).fields.approvalDate.timestampValue)/1000);
+  const approvedFields=(await approvedRequest.json()).fields;
+  const approvalSeconds=Math.floor(Date.parse(approvedFields.approvalDate.timestampValue)/1000);
   assert.ok(approvalSeconds>0,'Owner approval is recorded against the authenticated viewer UID.');
+  assert.equal(approvedFields.projectId.stringValue,'ksk','The approved membership is explicitly tied to the KSK project.');
+  assert.equal(approvedFields.role.stringValue,'viewer','The approved membership has a persistent viewer role.');
   const viewerSessionPath=`projects/${project}/databases/(default)/documents/projects/ksk/login_history/password-viewer-session`;
   const createViewerSession=await commit('password-viewer',[{update:{name:viewerSessionPath,fields:{
     userId:stringValue('password-viewer'),email:stringValue(''),displayName:stringValue('Family Viewer'),
@@ -393,7 +406,7 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const newAccessPath=`projects/${project}/databases/(default)/documents/viewerAccess/recovery-new`;
   const transfer=await commit('owner',[
     {update:{name:oldAccessPath,fields:{status:stringValue('revoked'),decidedBy:stringValue('owner'),decisionNote:stringValue('Owner verified session recovery.'),revokedBy:stringValue('owner')}},updateMask:{fieldPaths:['status','decidedBy','decisionNote','revokedBy','decisionAt','revokedAt','updatedAt']},updateTransforms:[{fieldPath:'decisionAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'revokedAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
-    {update:{name:newAccessPath,fields:{uid:stringValue('recovery-new'),fullName:oldRecoveryAccess.fields.fullName,normalizedMobileNumber:stringValue(recoveryPhone),status:stringValue('approved'),preferredLanguage:oldRecoveryAccess.fields.preferredLanguage,approvalDate:oldRecoveryAccess.fields.approvalDate,approverUid:oldRecoveryAccess.fields.approverUid}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:newAccessPath,fields:{uid:stringValue('recovery-new'),fullName:oldRecoveryAccess.fields.fullName,normalizedMobileNumber:stringValue(recoveryPhone),status:stringValue('approved'),preferredLanguage:oldRecoveryAccess.fields.preferredLanguage,projectId:stringValue('ksk'),role:stringValue('viewer'),approvalDate:oldRecoveryAccess.fields.approvalDate,approverUid:oldRecoveryAccess.fields.approverUid}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]},
     {update:{name:recoveryIndexPath,fields:{uid:stringValue('recovery-new'),status:stringValue('approved')}},updateMask:{fieldPaths:['uid','status']},updateTransforms:[{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
     {update:{name:recoveryStatusPath,fields:{status:stringValue('approved')}},updateMask:{fieldPaths:['status']},updateTransforms:[{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
     {update:{name:recoveryPath,fields:{status:stringValue('restored'),decidedBy:stringValue('owner')}},updateMask:{fieldPaths:['status','decidedBy','decisionAt','updatedAt']},updateTransforms:[{fieldPath:'decisionAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}

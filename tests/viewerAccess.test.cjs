@@ -138,7 +138,10 @@ test('approved members returning or choosing Sign Up do not create or reset a re
     fullName: 'Approved Member',
     normalizedMobileNumber: '+919876543210',
     status: 'approved',
-    preferredLanguage: 'en'
+    preferredLanguage: 'en',
+    approvalDate: 'approval-time',
+    projectId: 'ksk',
+    role: 'viewer'
   };
   documents.set('viewerAccess/approved-uid', request);
   documents.set('viewerPhoneIndex/+919876543210', {uid: 'approved-uid', status: 'approved'});
@@ -147,6 +150,9 @@ test('approved members returning or choosing Sign Up do not create or reset a re
   const lookup = await lookupViewerAccessByPhone('approved-uid', '98765-43210');
   assert.equal(lookup.currentSession, true);
   assert.equal(canContinueWithApprovedSession('approved-uid', lookup.request, '+91 98765 43210'), true);
+  assert.equal(canContinueWithApprovedSession('approved-uid', {...lookup.request, role: 'owner'}, '+919876543210'), false);
+  assert.equal(canContinueWithApprovedSession('approved-uid', {...lookup.request, projectId: 'other'}, '+919876543210'), false);
+  assert.equal(canContinueWithApprovedSession('approved-uid', {...lookup.request, approvalDate: undefined}, '+919876543210'), false);
 
   const repeatedSignUp = await registerViewerRequest('approved-uid', '0091 98765 43210', 'Changed Name', 'ta');
   assert.equal(repeatedSignUp.status, 'approved');
@@ -164,6 +170,8 @@ test('owner can add an approved invitation without granting access to a phone-on
   assert.equal(invite.manualInvite, true);
   assert.equal(invite.normalizedMobileNumber, '+919876543210');
   assert.equal(documents.get(`viewerAccess/${invite.uid}`).approverUid, 'owner');
+  assert.equal(documents.get(`viewerAccess/${invite.uid}`).projectId, 'ksk');
+  assert.equal(documents.get(`viewerAccess/${invite.uid}`).role, 'viewer');
   assert.equal(documents.get('viewerPhoneIndex/+919876543210').uid, invite.uid);
   assert.equal(documents.get('viewerPhoneStatus/+919876543210').status, 'approved');
   assert.equal(documents.get('viewerAccessHistory/generated-2').action, 'approved');
@@ -327,9 +335,18 @@ test('owner decisions approve, reject and revoke while preserving transition his
   const approve = addPending('approval-test', '+919876543210');
   await decideViewerAccess(approve, 'approved', 'owner');
   assert.equal(documents.get('viewerAccess/approval-test').status, 'approved');
+  assert.equal(documents.get('viewerAccess/approval-test').projectId, 'ksk');
+  assert.equal(documents.get('viewerAccess/approval-test').role, 'viewer');
+  assert.ok(documents.get('viewerAccess/approval-test').approvalDate);
   assert.equal(documents.get('viewerPhoneIndex/+919876543210').status, 'approved');
+  await assert.rejects(
+    decideViewerAccess(documents.get('viewerAccess/approval-test'), 'approved', 'owner'),
+    /can no longer be decided/
+  );
   await decideViewerAccess(documents.get('viewerAccess/approval-test'), 'revoked', 'owner');
   assert.equal(documents.get('viewerAccess/approval-test').status, 'revoked');
+  assert.equal(documents.get('viewerAccess/approval-test').projectId, 'ksk');
+  assert.equal(documents.get('viewerAccess/approval-test').role, 'viewer');
   assert.equal(documents.get('viewerPhoneIndex/+919876543210').status, 'revoked');
 
   const reject = addPending('reject-test', '+919876543211');
