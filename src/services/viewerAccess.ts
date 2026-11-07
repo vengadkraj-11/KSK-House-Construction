@@ -64,12 +64,15 @@ const historyCollection = () => collection(db!, 'viewerAccessHistory');
 
 export function normalizePhoneNumber(value: string): string {
   const trimmed = value.trim();
-  const digits = trimmed.replace(/\D/g, '');
-  if (/^\d{10}$/.test(digits)) return `+91${digits}`;
-  if (/^0\d{10}$/.test(digits)) return `+91${digits.slice(1)}`;
-  if (/^91\d{10}$/.test(digits)) return `+${digits}`;
-  if (/^00[1-9]\d{7,14}$/.test(digits)) return `+${digits.slice(2)}`;
-  return trimmed.startsWith('+') ? `+${digits}` : `+${digits}`;
+  if (!trimmed || !/^\+?[\d\s().-]+$/.test(trimmed)) return '';
+
+  let digits = trimmed.replace(/\D/g, '');
+  if (trimmed.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 10) digits = `91${digits}`;
+  else if (digits.length === 11 && digits.startsWith('0')) digits = `91${digits.slice(1)}`;
+  else if (digits.length === 13 && digits.startsWith('910')) digits = `91${digits.slice(3)}`;
+
+  return /^\+[1-9]\d{7,14}$/.test(`+${digits}`) ? `+${digits}` : '';
 }
 
 const isValidNormalizedPhone = (phone: string) => /^\+[1-9]\d{7,14}$/.test(phone);
@@ -86,7 +89,7 @@ export function canContinueWithApprovedSession(
     !!request.approvalDate &&
     (request.projectId === undefined || request.projectId === 'ksk') &&
     (request.role === undefined || request.role === 'viewer') &&
-    normalizePhoneNumber(mobileNumber) === request.normalizedMobileNumber
+    normalizePhoneNumber(mobileNumber) === normalizePhoneNumber(request.normalizedMobileNumber || '')
   );
 }
 
@@ -99,7 +102,7 @@ export async function registerViewerRequest(
   if (!db) throw new Error('Firebase is not configured.');
   const normalizedMobileNumber = normalizePhoneNumber(phone);
   if (!isValidNormalizedPhone(normalizedMobileNumber)) {
-    throw new Error('Enter a mobile number in international format, including the + country code.');
+    throw new Error('Enter a valid mobile number. Country code is optional for Indian numbers.');
   }
   const name = fullName.trim();
   if (name.length < 2 || name.length > 120) throw new Error('Enter your full name (2–120 characters).');
@@ -164,7 +167,7 @@ export async function addApprovedViewer(
   if (!ownerUid) throw new Error('Only the authenticated project owner can add a member.');
   const normalizedMobileNumber = normalizePhoneNumber(phone);
   if (!isValidNormalizedPhone(normalizedMobileNumber)) {
-    throw new Error('Enter a mobile number in international format, including the + country code.');
+    throw new Error('Enter a valid mobile number. Country code is optional for Indian numbers.');
   }
   const name = fullName.trim();
   if (name.length < 2 || name.length > 120) throw new Error('Enter your full name (2–120 characters).');
@@ -232,6 +235,107 @@ export async function addApprovedViewer(
   };
 }
 
+export async function editViewerMember(
+  request: ViewerAccessRequest,
+  fullName: string,
+  phone: string,
+  ownerUid: string
+) {
+  if (!db) throw new Error('Firebase is not configured.');
+  if (!ownerUid || request.uid === ownerUid) throw new Error('The owner account cannot be edited here.');
+  const normalizedMobileNumber = normalizePhoneNumber(phone);
+  if (!isValidNormalizedPhone(normalizedMobileNumber)) {
+    throw new Error('Enter a valid mobile number. Country code is optional for Indian numbers.');
+  }
+  const name = fullName.trim();
+  if (name.length < 2 || name.length > 120) throw new Error('Enter the member name (2–120 characters).');
+
+  const database = db;
+  const memberRef = accessPath(request.uid);
+  const profileRef = doc(database, 'users', request.uid);
+  const newIndexRef = phonePath(normalizedMobileNumber);
+  const newStatusRef = phoneStatusPath(normalizedMobileNumber);
+  const oldPhone = request.legacy ? '' : normalizePhoneNumber(request.normalizedMobileNumber || '');
+  const oldIndexRef = oldPhone && oldPhone !== normalizedMobileNumber ? phonePath(oldPhone) : null;
+  const oldStatusRef = oldPhone && oldPhone !== normalizedMobileNumber ? phoneStatusPath(oldPhone) : null;
+
+  await runTransaction(database, async transaction => {
+    const [memberSnapshot, profileSnapshot, newIndexSnapshot, newStatusSnapshot, oldIndexSnapshot, oldStatusSnapshot] = await Promise.all([
+      transaction.get(memberRef),
+      transaction.get(profileRef),
+      transaction.get(newIndexRef),
+      transaction.get(newStatusRef),
+      oldIndexRef ? transaction.get(oldIndexRef) : Promise.resolve(null),
+      oldStatusRef ? transaction.get(oldStatusRef) : Promise.resolve(null)
+    ]);
+
+    if (request.legacy) {
+      const profile = profileSnapshot.exists() ? profileSnapshot.data() : null;
+      if (memberSnapshot.exists() || profile?.projectId !== 'ksk' || profile?.role !== 'viewer') {
+        throw new Error('This existing viewer account could not be verified for editing.');
+      }
+    } else {
+      if (!memberSnapshot.exists()) throw new Error('This member no longer exists.');
+      const current = memberSnapshot.data() as ViewerAccessRequest;
+      if (current.uid !== request.uid) throw new Error('The member identity does not match.');
+      if (normalizePhoneNumber(current.normalizedMobileNumber || '') !== oldPhone) {
+        throw new Error('This member changed while you were editing. Reload the list and try again.');
+      }
+    }
+
+    const currentStatus = request.legacy ? 'approved' : (memberSnapshot.data() as ViewerAccessRequest).status;
+    if (newIndexSnapshot.exists() && (newIndexSnapshot.data() as ViewerPhoneIndex).uid !== request.uid) {
+      throw new Error('This mobile number already belongs to another member.');
+    }
+    if (!newIndexSnapshot.exists() && newStatusSnapshot.exists() && oldPhone !== normalizedMobileNumber) {
+      throw new Error('This mobile number is already reserved.');
+    }
+    if (oldIndexSnapshot?.exists() && (oldIndexSnapshot.data() as ViewerPhoneIndex).uid !== request.uid) {
+      throw new Error('The current mobile number is linked to another member.');
+    }
+
+    const timestamp = serverTimestamp();
+    if (request.legacy) {
+      transaction.set(memberRef, {
+        uid: request.uid,
+        fullName: name,
+        normalizedMobileNumber,
+        status: currentStatus,
+        preferredLanguage: request.preferredLanguage,
+        projectId: 'ksk',
+        role: 'viewer',
+        manualInvite: false,
+        registeredAt: timestamp,
+        createdAt: timestamp,
+        approvalDate: timestamp,
+        approverUid: ownerUid
+      });
+    } else {
+      transaction.update(memberRef, {fullName: name, normalizedMobileNumber, updatedAt: timestamp});
+    }
+
+    if (newIndexSnapshot.exists()) {
+      transaction.update(newIndexRef, {status: currentStatus, updatedAt: timestamp});
+    } else {
+      transaction.set(newIndexRef, {
+        uid: request.uid,
+        status: currentStatus,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+    if (newStatusSnapshot.exists()) {
+      transaction.update(newStatusRef, {status: currentStatus, updatedAt: timestamp});
+    } else {
+      transaction.set(newStatusRef, {status: currentStatus, createdAt: timestamp, updatedAt: timestamp});
+    }
+    if (oldIndexSnapshot?.exists()) {
+      transaction.delete(oldIndexRef!);
+      if (oldStatusSnapshot?.exists()) transaction.delete(oldStatusRef!);
+    }
+  });
+}
+
 export async function lookupViewerAccessByPhone(
   authenticatedUid: string | null | undefined,
   phone: string
@@ -239,7 +343,7 @@ export async function lookupViewerAccessByPhone(
   if (!db) throw new Error('Firebase is not configured.');
   const normalizedMobileNumber = normalizePhoneNumber(phone);
   if (!isValidNormalizedPhone(normalizedMobileNumber)) {
-    throw new Error('Enter a mobile number in international format, including the + country code.');
+    throw new Error('Enter a valid mobile number. Country code is optional for Indian numbers.');
   }
 
   const currentRequest = authenticatedUid ? await getDocFromServer(accessPath(authenticatedUid)) : null;
@@ -327,7 +431,8 @@ export function subscribeViewerRequest(
     onError(new Error('Firebase is not configured.'));
     return () => {};
   }
-  return onSnapshot(accessPath(uid), snapshot => {
+  return onSnapshot(accessPath(uid), {includeMetadataChanges: true}, snapshot => {
+    if (snapshot.metadata.fromCache) return;
     onChange(snapshot.exists() ? snapshot.data() as ViewerAccessRequest : null);
   }, onError);
 }

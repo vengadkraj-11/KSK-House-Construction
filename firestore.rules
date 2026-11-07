@@ -147,6 +147,46 @@ service cloud.firestore {
         && existsAfter(viewerPhoneStatusPath(phone))
         && getAfter(viewerPhoneStatusPath(phone)).data.get('status', null) == 'approved';
     }
+    function validOwnerLegacyViewerLinkCreate(uid) {
+      let data = request.resource.data;
+      let phone = data.get('normalizedMobileNumber', '');
+      let profilePath = /databases/$(database)/documents/users/$(uid);
+      let indexPath = viewerPhoneIndexPath(phone);
+      return isOwner('ksk')
+        && uid != request.auth.uid
+        && exists(profilePath)
+        && get(profilePath).data.get('projectId', null) == 'ksk'
+        && get(profilePath).data.get('role', null) == 'viewer'
+        && data.keys().hasAll([
+          'uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage',
+          'projectId', 'role', 'manualInvite', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage',
+          'projectId', 'role', 'manualInvite', 'registeredAt', 'createdAt', 'approvalDate', 'approverUid'
+        ])
+        && data.get('uid', null) == uid
+        && data.get('fullName', null) is string
+        && data.get('fullName', null).size() >= 2
+        && data.get('fullName', null).size() <= 120
+        && phone.matches('^\\+[1-9][0-9]{7,14}$')
+        && data.get('status', null) == 'approved'
+        && data.get('preferredLanguage', null) in ['en', 'ta']
+        && data.get('projectId', null) == 'ksk'
+        && data.get('role', null) == 'viewer'
+        && data.get('manualInvite', null) == false
+        && data.get('registeredAt', null) == request.time
+        && data.get('createdAt', null) == request.time
+        && data.get('approvalDate', null) == request.time
+        && data.get('approverUid', null) == request.auth.uid
+        && !exists(viewerAccessPath(uid))
+        && !exists(indexPath)
+        && existsAfter(indexPath)
+        && getAfter(indexPath).data.get('uid', null) == uid
+        && getAfter(indexPath).data.get('status', null) == 'approved'
+        && existsAfter(viewerPhoneStatusPath(phone))
+        && getAfter(viewerPhoneStatusPath(phone)).data.get('status', null) == 'approved';
+    }
     function validViewerHistoryCreate(uid) {
       let data = request.resource.data;
       let phone = data.get('normalizedMobileNumber', '');
@@ -230,6 +270,41 @@ service cloud.firestore {
         && existsAfter(viewerPhoneStatusPath(before.get('normalizedMobileNumber', '')))
         && getAfter(viewerPhoneStatusPath(before.get('normalizedMobileNumber', ''))).data.get('status', null) == after.get('status', null)
         && (approving || rejecting || revoking);
+    }
+    function validOwnerViewerEdit(uid) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let phone = after.get('normalizedMobileNumber', '');
+      let indexPath = viewerPhoneIndexPath(phone);
+      let statusPath = viewerPhoneStatusPath(phone);
+      return isOwner('ksk')
+        && before.get('uid', null) == uid
+        && after.get('uid', null) == uid
+        && after.diff(before).affectedKeys().hasOnly(['fullName', 'normalizedMobileNumber', 'updatedAt'])
+        && after.get('fullName', null) is string
+        && after.get('fullName', null).size() >= 2
+        && after.get('fullName', null).size() <= 120
+        && phone.matches('^\\+[1-9][0-9]{7,14}$')
+        && after.get('updatedAt', null) == request.time
+        && existsAfter(indexPath)
+        && getAfter(indexPath).data.get('uid', null) == uid
+        && getAfter(indexPath).data.get('status', null) == after.get('status', null)
+        && existsAfter(statusPath)
+        && getAfter(statusPath).data.get('status', null) == after.get('status', null);
+    }
+    function validOwnerPhoneMove(phone, oldUid) {
+      let memberPath = viewerAccessPath(oldUid);
+      return isOwner('ksk')
+        && oldUid is string
+        && oldUid.size() > 0
+        && existsAfter(memberPath)
+        && getAfter(memberPath).data.get('uid', null) == oldUid
+        && getAfter(memberPath).data.get('normalizedMobileNumber', '') != phone
+        && existsAfter(viewerPhoneIndexPath(getAfter(memberPath).data.get('normalizedMobileNumber', '')))
+        && getAfter(viewerPhoneIndexPath(getAfter(memberPath).data.get('normalizedMobileNumber', ''))).data.get('uid', null) == oldUid
+        && getAfter(viewerPhoneIndexPath(getAfter(memberPath).data.get('normalizedMobileNumber', ''))).data.get('status', null) == getAfter(memberPath).data.get('status', null)
+        && existsAfter(viewerPhoneStatusPath(getAfter(memberPath).data.get('normalizedMobileNumber', '')))
+        && getAfter(viewerPhoneStatusPath(getAfter(memberPath).data.get('normalizedMobileNumber', ''))).data.get('status', null) == getAfter(memberPath).data.get('status', null);
     }
     function validViewerPhoneIndexCreate(phone) {
       let data = request.resource.data;
@@ -533,6 +608,7 @@ service cloud.firestore {
       allow list: if isOwner('ksk');
       allow create: if validViewerRequestCreate(uid)
         || validManualViewerCreate(uid)
+        || validOwnerLegacyViewerLinkCreate(uid)
         || validLegacyRevocation(uid)
         || validRecoveryViewerCreate(uid);
       allow update: if (signedIn()
@@ -546,6 +622,7 @@ service cloud.firestore {
           && request.resource.data.get('updatedAt', null) == request.time
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['preferredLanguage', 'updatedAt']))
         || validViewerDecision(uid)
+        || validOwnerViewerEdit(uid)
         || validRecoveryTransferRevoke(uid);
       allow delete: if isOwner('ksk')
         && (resource.data.get('status', null) in ['pending', 'rejected']
@@ -560,6 +637,7 @@ service cloud.firestore {
       allow update: if validViewerPhoneIndexUpdate(phone);
       allow delete: if isOwner('ksk')
         && (resource.data.get('status', null) in ['pending', 'rejected']
+          || validOwnerPhoneMove(phone, resource.data.get('uid', ''))
           || (!existsAfter(viewerAccessPath(resource.data.get('uid', '')))
             && existsAfter(viewerAccountDeletionPath(resource.data.get('uid', '')))
             && getAfter(viewerAccountDeletionPath(resource.data.get('uid', ''))).data.get('actorUid', null) == request.auth.uid));
@@ -575,6 +653,7 @@ service cloud.firestore {
       allow update: if validViewerPhoneStatusUpdate(phone);
       allow delete: if isOwner('ksk')
         && (resource.data.get('status', null) in ['pending', 'rejected']
+          || validOwnerPhoneMove(phone, get(viewerPhoneIndexPath(phone)).data.get('uid', ''))
           || (!existsAfter(viewerPhoneIndexPath(phone))
             && exists(viewerPhoneIndexPath(phone))
             && existsAfter(viewerAccountDeletionPath(get(viewerPhoneIndexPath(phone)).data.get('uid', '')))

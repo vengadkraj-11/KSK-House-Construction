@@ -245,6 +245,47 @@ test('manual member addition rejects duplicate phone numbers and invalid details
   assert.equal([...documents.keys()].filter(key => key.startsWith('viewerAccess/')).length, 1);
 });
 
+test('owner edits member details atomically and refuses duplicate mobile numbers', async () => {
+  const {addApprovedViewer, editViewerMember, documents} = createViewerAccess();
+  const member = await addApprovedViewer('First Member', '9876543210', 'owner', 'en');
+  await addApprovedViewer('Second Member', '9876543212', 'owner', 'en');
+
+  await editViewerMember(member, 'Updated Member', '09876543211', 'owner');
+  assert.equal(documents.get(`viewerAccess/${member.uid}`).fullName, 'Updated Member');
+  assert.equal(documents.get(`viewerAccess/${member.uid}`).normalizedMobileNumber, '+919876543211');
+  assert.equal(documents.has('viewerPhoneIndex/+919876543210'), false);
+  assert.equal(documents.has('viewerPhoneStatus/+919876543210'), false);
+  assert.equal(documents.get('viewerPhoneIndex/+919876543211').uid, member.uid);
+  assert.equal(documents.get('viewerPhoneStatus/+919876543211').status, 'approved');
+
+  await assert.rejects(
+    editViewerMember(documents.get(`viewerAccess/${member.uid}`), 'Updated Member', '9876543212', 'owner'),
+    /already belongs to another member/
+  );
+  assert.equal(documents.get(`viewerAccess/${member.uid}`).normalizedMobileNumber, '+919876543211');
+});
+
+test('owner can attach a number to an existing legacy viewer UID without changing its identity', async () => {
+  const {editViewerMember, documents} = createViewerAccess();
+  documents.set('users/legacy-viewer', {projectId: 'ksk', role: 'viewer', displayName: 'Legacy Viewer'});
+  const legacy = {
+    uid: 'legacy-viewer',
+    fullName: 'Legacy Viewer',
+    normalizedMobileNumber: '',
+    status: 'approved',
+    preferredLanguage: 'en',
+    legacy: true
+  };
+
+  await editViewerMember(legacy, 'Updated Legacy Viewer', '9876543210', 'owner');
+  const member = documents.get('viewerAccess/legacy-viewer');
+  assert.equal(member.uid, 'legacy-viewer');
+  assert.equal(member.fullName, 'Updated Legacy Viewer');
+  assert.equal(member.normalizedMobileNumber, '+919876543210');
+  assert.equal(member.status, 'approved');
+  assert.equal(documents.get('viewerPhoneIndex/+919876543210').uid, 'legacy-viewer');
+});
+
 test('a different session cannot enumerate another member through phone status lookup', async () => {
   const {lookupViewerAccessByPhone, canContinueWithApprovedSession, documents} = createViewerAccess();
   documents.set('viewerAccess/approved-uid', {
@@ -282,11 +323,19 @@ test('revoked members cannot continue and repeated sign-up does not restore acce
   assert.equal(documents.get('viewerAccess/revoked-uid').status, 'revoked');
 });
 
-test('different number formatting and simultaneous submissions create only one pending request', async () => {
+test('local and international formats normalize consistently without merging distinct numbers', async () => {
   const {normalizePhoneNumber, registerViewerRequest, documents} = createViewerAccess();
+  assert.equal(normalizePhoneNumber('9876543210'), '+919876543210');
+  assert.equal(normalizePhoneNumber('09876543210'), '+919876543210');
+  assert.equal(normalizePhoneNumber('+91 09876543210'), '+919876543210');
   assert.equal(normalizePhoneNumber('+91 (98765) 43210'), '+919876543210');
   assert.equal(normalizePhoneNumber('0091-98765-43210'), '+919876543210');
   assert.equal(normalizePhoneNumber('91 98765 43210'), '+919876543210');
+  assert.equal(normalizePhoneNumber('+1 (202) 555-0100'), '+12025550100');
+  assert.equal(normalizePhoneNumber('12025550100'), '+12025550100');
+  assert.notEqual(normalizePhoneNumber('9876543210'), normalizePhoneNumber('+1 9876543210'));
+  assert.equal(normalizePhoneNumber('9876543210 ext 1'), '');
+  assert.equal(normalizePhoneNumber('12345'), '');
 
   const results = await Promise.all([
     registerViewerRequest('simultaneous-a', '9876543210', 'Member A', 'en').then(value => ({status: 'fulfilled', value}), error => ({status: 'rejected', error})),

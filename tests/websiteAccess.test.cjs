@@ -57,35 +57,45 @@ test('owner login keeps email/password authentication and the owner membership g
   assert.match(app, /if \(role === 'owner'\) setScreen\('Settings'\)/);
 });
 
-test('signed-out website offers separate sign-in and sign-up with a discreet owner link', () => {
+test('signed-out website offers a sign-in-only landing and a discreet owner link', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'App.tsx'), 'utf8');
   const viewer = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'FamilyViewer.tsx'), 'utf8');
+  const service = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'viewerAccess.ts'), 'utf8');
   assert.doesNotMatch(app, /function WebsiteAccessScreen/);
   assert.match(app, /webEntry === 'choices'/);
   assert.match(app, /if \(webEntry === 'choices'\) return <FamilyViewer/);
   assert.match(viewer, /function AccessHome/);
   assert.match(viewer, /label=\{text\(language, 'Sign In'\)\}/);
-  assert.match(viewer, /label=\{text\(language, 'Sign Up'\)/);
   assert.match(viewer, /function AccessHeader/);
   assert.match(viewer, /text\(language, 'Owner Login'\)/);
-  assert.match(viewer, /mode === 'sign-up'/);
-  assert.match(viewer, /TextInput value=\{fullName\}/);
   assert.match(viewer, /TextInput value=\{phone\}/);
+  assert.doesNotMatch(viewer, /Sign Up|requestViewerRecovery|registerViewerRequest|Choose language/);
+  assert.match(viewer, /Your number is not approved yet\. Please contact the admin\./);
+  assert.match(viewer, /Your access has been revoked\. Please contact the admin\./);
+  assert.match(viewer, /This number is not linked to this browser\./);
+  assert.match(service, /getDocFromServer\(accessPath\(authenticatedUid\)\)/);
+  assert.match(service, /if \(snapshot\.metadata\.fromCache\) return/);
   assert.doesNotMatch(viewer, /TextInput value=\{email\}/);
   assert.doesNotMatch(viewer, /TextInput value=\{password\}/);
   assert.match(viewer, /signInAnonymously\(auth\)/);
   assert.match(viewer, /setPersistence\(browserAuth, browserLocalPersistence\)/);
   assert.match(viewer, /canContinueWithApprovedSession\(requester\.uid, result\.request, normalizedPhone\)/);
-  assert.match(viewer, /Your registration is awaiting owner approval\./);
   assert.match(viewer, /lookupViewerAccessByPhone\(requester\.uid, normalizedPhone\)/);
-  assert.match(viewer, /requestViewerRecovery\(requester\.uid, normalizedPhone\)/);
-  assert.match(viewer, /if \(recovery\.currentSession && recovery\.request\)/);
-  assert.match(viewer, /onApproved\(recovery\.request\)/);
   assert.match(viewer, /setMobileConfirmed\(!!request && canContinueWithApprovedSession\(/);
   assert.doesNotMatch(viewer, /setMobileConfirmed\(false\);\s*\},\s*\[user\?\.uid,\s*access\?\.status/);
-  assert.match(viewer, /if \(recovery\.status === 'pending'\) setMessage/);
 });
 
+test('owner member management is limited to listing, adding, editing and deleting profiles', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'App.tsx'), 'utf8');
+  const manager = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'FamilyMemberManagement.tsx'), 'utf8');
+  assert.match(app, /<FamilyMemberManagement ownerUid=\{user\.uid\}/);
+  assert.match(manager, /addApprovedViewer/);
+  assert.match(manager, /editViewerMember/);
+  assert.match(manager, /deleteViewerAccount/);
+  assert.match(manager, /subscribeViewerRequests/);
+  assert.doesNotMatch(manager, /decideViewerAccess|decideViewerRecovery|subscribeViewerRecoveryRequests/);
+  assert.doesNotMatch(manager, /t\('Approve'|t\('Reject'|t\('Recovery'/);
+});
 test('a saved approved family session restores directly to the dashboard without a sign-in loop', () => {
   const viewer = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'FamilyViewer.tsx'), 'utf8');
   const persistence = viewer.indexOf('setPersistence(browserAuth, browserLocalPersistence)');

@@ -30,7 +30,7 @@ import {Alert} from './src/services/platformAlert';
 import {KSK_DESIGN} from './src/theme/kskDesignSystem';
 import {getPreferredLanguage, resolveProjectRole, savePreferredLanguage, shouldRenderFamilyViewer} from './src/services/websiteAccess';
 import FamilyViewer from './src/components/FamilyViewer';
-import ViewerAccessManagement from './src/components/ViewerAccessManagement';
+import FamilyMemberManagement from './src/components/FamilyMemberManagement';
 
 const C = {
   ink: KSK_DESIGN.colors.ink, muted: KSK_DESIGN.colors.inkMuted,
@@ -1081,7 +1081,7 @@ function SettingsScreen({role, user, syncCount, cloudReady, initialising, onSeed
         </Picker>
       </View>
     </View>
-    {owner && user?.uid ? <ViewerAccessManagement ownerUid={user.uid} language={language}/> : null}
+    {owner && user?.uid ? <FamilyMemberManagement ownerUid={user.uid} language={language}/> : null}
 
     <View style={cardStyle({marginBottom:12})}>
       <SectionTitle title={t('Project activity','திட்டச் செயல்பாடு')} right={t('Open activity','செயல்பாட்டைத் திற')} onRight={onViewActivity}/>

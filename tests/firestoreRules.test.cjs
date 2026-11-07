@@ -396,6 +396,37 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal((await changedLanguage.json()).fields.preferredLanguage.stringValue,'en','A changed language preference remains saved.');
   assert.equal((await fetch(`${root}:runQuery`,{method:'POST',headers:{Authorization:`Bearer ${token('password-viewer',undefined,'password')}`,'Content-Type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'users'}],where:{fieldFilter:{field:{fieldPath:'projectId'},op:'EQUAL',value:stringValue('ksk')}}}})})).status,403,'Viewers cannot list membership or owner information.');
 
+  const editablePhone='+15550004700';
+  const editedPhone='+15550004701';
+  assert.equal((await createViewer('edit-viewer',editablePhone)).status,200,'An edit fixture can be registered.');
+  assert.equal((await decideViewer('edit-viewer',editablePhone,'approved')).status,200,'The edit fixture is owner-approved.');
+  const forgedEdit=await commit('edit-viewer',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/edit-viewer`,fields:{fullName:stringValue('Forged'),normalizedMobileNumber:stringValue(editedPhone)}},updateMask:{fieldPaths:['fullName','normalizedMobileNumber']},updateTransforms:[{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}],undefined,'password');
+  assert.equal(forgedEdit.status,403,'A viewer cannot edit its own member name or phone.');
+  const ownerEdit=await commit('owner',[
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/edit-viewer`,fields:{fullName:stringValue('Edited Viewer'),normalizedMobileNumber:stringValue(editedPhone)}},updateMask:{fieldPaths:['fullName','normalizedMobileNumber']},updateTransforms:[{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${editablePhone}`},
+    {delete:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${editablePhone}`},
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${editedPhone}`,fields:{uid:stringValue('edit-viewer'),status:stringValue('approved')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${editedPhone}`,fields:{status:stringValue('approved')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}
+  ]);
+  assert.equal(ownerEdit.status,200,await ownerEdit.text(),'Only the owner can atomically edit member details and move the unique phone index.');
+  const editedMember=await request('viewerAccess/edit-viewer','owner');
+  assert.equal(editedMember.status,200);
+  const editedFields=(await editedMember.json()).fields;
+  assert.equal(editedFields.fullName.stringValue,'Edited Viewer');
+  assert.equal(editedFields.normalizedMobileNumber.stringValue,editedPhone);
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','edit-viewer','GET',undefined,undefined,'password')).status,200,'Editing contact details preserves the same UID-bound viewer access.');
+
+  await seed('users/legacy-link-viewer',{projectId:stringValue('ksk'),role:stringValue('viewer'),displayName:stringValue('Legacy Viewer')});
+  const legacyLinkPhone='+15550004702';
+  const legacyLink=await commit('owner',[
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/legacy-link-viewer`,fields:{uid:stringValue('legacy-link-viewer'),fullName:stringValue('Legacy Viewer'),normalizedMobileNumber:stringValue(legacyLinkPhone),status:stringValue('approved'),preferredLanguage:stringValue('en'),projectId:stringValue('ksk'),role:stringValue('viewer'),manualInvite:{booleanValue:false},approverUid:stringValue('owner')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'approvalDate',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerPhoneIndex/${legacyLinkPhone}`,fields:{uid:stringValue('legacy-link-viewer'),status:stringValue('approved')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]},
+    {update:{name:`projects/${project}/databases/(default)/documents/viewerPhoneStatus/${legacyLinkPhone}`,fields:{status:stringValue('approved')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'updatedAt',setToServerValue:'REQUEST_TIME'}]}
+  ]);
+  assert.equal(legacyLink.status,200,await legacyLink.text(),'An owner can attach a number only to an existing viewer UID profile.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','legacy-link-viewer','GET',undefined,undefined,'password')).status,200,'Linking contact details to the existing UID preserves its read-only access.');
+
   const recoveryPhone='+15550004567';
   assert.equal((await createViewer('recovery-old',recoveryPhone,'ta','anonymous')).status,200,'A new family member can create one pending registration.');
   assert.equal((await decideViewer('recovery-old',recoveryPhone,'approved')).status,200,'Owner approval updates both private identity and status indexes.');
