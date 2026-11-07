@@ -1,8 +1,36 @@
 import {SheetMap, SheetDocument} from '../types';
+import {headersForSheet, meaningfulRows} from '../data';
 
 const n = (v: any) => Number(v) || 0;
 const has = (v: any) => v !== null && v !== undefined && v !== '';
 const rows = (sheet?: SheetDocument) => sheet?.values?.slice(1) || [];
+const expenseAmount = (value: any): number | null => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const raw = String(value ?? '').trim().replace(/[₹,\s]/g, '');
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+function dailyExpenseRows(sheet?: SheetDocument) {
+  if (!sheet) return [];
+  const headers = headersForSheet('daily_expenses', sheet);
+  const paidAmountIndex = headers.findIndex(header => /^amount paid\b/i.test(header.trim()));
+  const amountIndex = paidAmountIndex >= 0
+    ? paidAmountIndex
+    : headers.findIndex(header => /^amount\b/i.test(header.trim()));
+  const categoryIndex = headers.findIndex(header => /^expense category$/i.test(header.trim()));
+  if (amountIndex < 0) return [];
+
+  const seenIds = new Set<string>();
+  return meaningfulRows(sheet).flatMap(({row, index}) => {
+    const recordId = String(sheet.recordIds?.[index] || '').trim();
+    if (recordId && seenIds.has(recordId)) return [];
+    if (recordId) seenIds.add(recordId);
+    const amount = expenseAmount(row[amountIndex]);
+    return amount === null ? [] : [{row, amount}];
+  }).map(entry => ({...entry, category: categoryIndex < 0 ? '' : String(entry.row[categoryIndex] || '')}));
+}
 
 export type DashboardNumbers = {
   materialsBudget: number;
@@ -26,7 +54,7 @@ export function calculateDashboard(sheets: SheetMap): DashboardNumbers {
   const labour = rows(sheets.labour_work);
   const fees = rows(sheets.professional_fees);
   const misc = rows(sheets.misc_equipment);
-  const daily = rows(sheets.daily_expenses);
+  const daily = dailyExpenseRows(sheets.daily_expenses);
   const schedule = rows(sheets.work_schedule);
   const setup = sheets.project_setup?.values || [];
 
@@ -35,31 +63,31 @@ export function calculateDashboard(sheets: SheetMap): DashboardNumbers {
     const amount = formula ? (has(r[6]) && has(r[7]) ? n(r[6]) * n(r[7]) * (1 + n(r[8])) : 0) : (has(r[9]) ? n(r[9]) : 0);
     return sum + amount;
   }, 0);
-  const materialsPaid = daily.reduce((sum, r) =>
-    sum + (/^material$/i.test(String(r[4] || '')) ? n(r[7]) : 0), 0);
+  const materialsPaid = daily.reduce((sum, entry) =>
+    sum + (/^material$/i.test(entry.category) ? entry.amount : 0), 0);
   const labourBudget = labour.reduce((sum, r, index) => {
     const formula = sheets.labour_work?.formulas?.[index + 1]?.[7];
     return sum + (formula ? (has(r[5]) && has(r[6]) ? n(r[5]) * n(r[6]) : 0) : (has(r[7]) ? n(r[7]) : 0));
   }, 0);
-  const labourPaid = daily.reduce((sum, r) =>
-    sum + (/^labour$/i.test(String(r[4] || '')) ? n(r[7]) : 0), 0);
+  const labourPaid = daily.reduce((sum, entry) =>
+    sum + (/^labour$/i.test(entry.category) ? entry.amount : 0), 0);
   const feesBudget = fees.reduce((sum, r, index) => {
     const formula = sheets.professional_fees?.formulas?.[index + 1]?.[5];
     return sum + (formula ? n(r[4]) : (has(r[5]) ? n(r[5]) : n(r[4])));
   }, 0);
-  const feesPaid = daily.reduce((sum, r) =>
-    sum + (/^engineer\/architect$/i.test(String(r[4] || '')) ? n(r[7]) : 0), 0);
+  const feesPaid = daily.reduce((sum, entry) =>
+    sum + (/^engineer\/architect$/i.test(entry.category) ? entry.amount : 0), 0);
   const miscBudget = misc.reduce((sum, r, index) => {
     const formula = sheets.misc_equipment?.formulas?.[index + 1]?.[6];
     return sum + (formula ? (has(r[4]) && has(r[5]) ? n(r[4]) * n(r[5]) : 0) : (has(r[6]) ? n(r[6]) : 0));
   }, 0);
-  const miscPaid = daily.reduce((sum, r) =>
-    sum + (/^(equipment|transport|other)$/i.test(String(r[4] || '')) ? n(r[7]) : 0), 0);
+  const miscPaid = daily.reduce((sum, entry) =>
+    sum + (/^(equipment|transport|other)$/i.test(entry.category) ? entry.amount : 0), 0);
   const contingencyRate = n(setup?.[6]?.[1]);
   const base = materialsBudget + labourBudget + feesBudget + miscBudget;
   const contingency = base * contingencyRate;
   const totalBudget = base + contingency;
-  const dailyExpenses = daily.reduce((sum, r) => sum + n(r[7]), 0);
+  const dailyExpenses = daily.reduce((sum, entry) => sum + entry.amount, 0);
   const totalPaid = dailyExpenses;
   const progressRows = schedule.filter(r => has(r[2]));
   const progress = progressRows.length

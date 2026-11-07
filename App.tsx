@@ -153,40 +153,6 @@ function LoginScreen({onLogin, demo, language = 'en', onBack}: {
   </SafeAreaView>;
 }
 
-function WebsiteAccessScreen({language, onLanguageChange, onOwnerLogin, onFamilyLogin}: {
-  language: 'en' | 'ta';
-  onLanguageChange: (value: 'en' | 'ta') => void;
-  onOwnerLogin: () => void;
-  onFamilyLogin: () => void;
-}) {
-  const t = (english: string, tamil: string) => language === 'ta' ? tamil : english;
-  const accessButton = (title: string, detail: string, onPress: () => void) => (
-    <TouchableOpacity accessibilityRole="button" onPress={onPress} style={cardStyle({padding: 20, marginTop: 12, borderColor: C.line})}>
-      <Text style={{fontSize: 17, color: C.ink, fontWeight: '900'}}>{title}</Text>
-      <Text style={{fontSize: 12, color: C.muted, marginTop: 5}}>{detail}</Text>
-    </TouchableOpacity>
-  );
-  return <SafeAreaView style={{flex: 1, backgroundColor: C.paper}}>
-    <StatusBar barStyle="dark-content"/>
-    <ScrollView contentContainerStyle={{flexGrow: 1, justifyContent: 'center', padding: 22}}>
-      <View style={{alignSelf: 'center', width: 68, height: 68, borderRadius: 21, backgroundColor: C.dark, alignItems: 'center', justifyContent: 'center', marginBottom: 17}}>
-        <Text style={{fontSize: 23, color: '#FFF', fontWeight: '900', letterSpacing: 1}}>KSK</Text>
-      </View>
-      <Text style={{fontSize: KSK_DESIGN.typography.display, fontWeight: '900', textAlign: 'center', color: C.ink}}>KSK House Construction</Text>
-      <Text style={{fontSize: 13, textAlign: 'center', color: C.muted, marginTop: 7}}>{t('Secure project access for the owner and family', 'உரிமையாளர் மற்றும் குடும்பத்தினருக்கான பாதுகாப்பான அணுகல்')}</Text>
-      <View style={cardStyle({padding: 18, marginTop: 23})}>
-        <Text style={{fontSize: 15, fontWeight: '900', color: C.ink}}>{t('Preferred language', 'விருப்பமான மொழி')}</Text>
-        <View style={{flexDirection: 'row', gap: 10, marginTop: 11}}>
-          <View style={{flex: 1}}><TouchableOpacity accessibilityRole="button" accessibilityState={{selected: language === 'en'}} onPress={() => onLanguageChange('en')} style={{...buttonStyle(false, language !== 'en'), minHeight: 46}}><Text style={{fontWeight: '800', color: language === 'en' ? '#FFF' : C.green}}>English</Text></TouchableOpacity></View>
-          <View style={{flex: 1}}><TouchableOpacity accessibilityRole="button" accessibilityState={{selected: language === 'ta'}} onPress={() => onLanguageChange('ta')} style={{...buttonStyle(false, language !== 'ta'), minHeight: 46}}><Text style={{fontWeight: '800', color: language === 'ta' ? '#FFF' : C.green}}>தமிழ்</Text></TouchableOpacity></View>
-        </View>
-      </View>
-      {accessButton(t('Owner Login', 'உரிமையாளர் உள்நுழைவு'), t('Sign in with the existing owner account.', 'தற்போதைய உரிமையாளர் கணக்கில் உள்நுழையவும்.'), onOwnerLogin)}
-      {accessButton(t('Family Viewer Login', 'குடும்பப் பார்வையாளர் உள்நுழைவு'), t('Read approved project information and download bills or receipts.', 'அனுமதிக்கப்பட்ட திட்டத் தகவலைப் படித்து பில்கள் அல்லது ரசீதுகளைப் பதிவிறக்கவும்.'), onFamilyLogin)}
-    </ScrollView>
-  </SafeAreaView>;
-}
-
 function MetricCard({label, value, helper, accent = false}: any) {
   return <View style={cardStyle({flex: 1, minWidth: 148, padding: 16, borderRadius: KSK_DESIGN.radius.lg, backgroundColor: accent ? C.dark : C.white, borderColor: accent ? C.dark : C.line})}>
     <Text style={{fontSize: 10, color: accent ? '#C7DAD2' : C.muted, fontWeight: '800', letterSpacing: 0.65}}>{label.toUpperCase()}</Text>
@@ -1692,18 +1658,37 @@ function AppContent() {
     if (!user) {
       if (Platform.OS === 'web') {
         if (!languageLoaded) return <SafeAreaView style={{flex: 1, backgroundColor: C.paper, justifyContent: 'center', alignItems: 'center'}}><ActivityIndicator color={C.green}/></SafeAreaView>;
-        if (webEntry === 'choices') return <WebsiteAccessScreen
-          language={language}
+        if (webEntry === 'choices') return <FamilyViewer
           onLanguageChange={value => void changeLanguage(value)}
-          onOwnerLogin={() => setWebEntry('owner-login')}
-          onFamilyLogin={() => {window.location.href = '/family';}}
+          onOwnerLogin={() => {
+            const showLogin = () => setWebEntry('owner-login');
+            if (user && auth) {
+              void signOut(auth).then(showLogin).catch((error: any) => {
+                Alert.alert('Could not open owner login', error?.message || 'Please try again.');
+              });
+            } else {
+              showLogin();
+            }
+          }}
         />;
         return <LoginScreen language={language} onBack={() => setWebEntry('choices')} onLogin={signIn}/>;
       }
       return <LoginScreen onLogin={signIn} demo={() => {setDemoMode(true); setSheets(LOCAL_WORKBOOK);}} />;
     }
     if (!roleChecked) return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', alignItems:'center'}}><ActivityIndicator color={C.green}/><Text style={{color:C.muted, marginTop:12}}>{language === 'ta' ? 'திட்ட அணுகலைச் சரிபார்க்கிறது…' : 'Checking project access…'}</Text></SafeAreaView>;
-    if (Platform.OS === 'web' && shouldRenderFamilyViewer('/', role, !!user)) return <FamilyViewer />;
+    if (Platform.OS === 'web' && shouldRenderFamilyViewer(window.location.pathname, role, !!user)) return <FamilyViewer
+      onLanguageChange={value => void changeLanguage(value)}
+      onOwnerLogin={() => {
+        const showLogin = () => setWebEntry('owner-login');
+        if (auth) {
+          void signOut(auth).then(showLogin).catch((error: any) => {
+            Alert.alert('Could not open owner login', error?.message || 'Please try again.');
+          });
+        } else {
+          showLogin();
+        }
+      }}
+    />;
     const accessMessage = membershipIssue === 'missing'
       ? 'User membership document is missing at users/{authenticatedUid}.'
       : membershipIssue === 'wrong-project'
@@ -1714,7 +1699,19 @@ function AppContent() {
     return <SafeAreaView style={{flex:1, backgroundColor:C.paper, justifyContent:'center', padding:24}}><View style={cardStyle()}><Text style={{fontSize:20, fontWeight:'900', color:C.ink}}>{language === 'ta' ? 'அணுகல் ஒதுக்கப்படவில்லை' : 'Project membership issue'}</Text><Text style={{fontSize:13, lineHeight:20, color:C.muted, marginTop:9}}>{language === 'ta' ? 'இந்த Firebase கணக்கிற்கு KSK திட்டத்தில் உரிமையாளர் அல்லது பார்வையாளர் அனுமதி இல்லை. Firestore-இல் அனுமதியை ஒதுக்க திட்ட நிர்வாகியிடம் கேட்டு மீண்டும் உள்நுழையவும்.' : accessMessage}</Text><TouchableOpacity onPress={performSignOut} style={{...buttonStyle(), marginTop:16}}><Text style={{color:'#FFF', fontWeight:'800'}}>{language === 'ta' ? 'வெளியேறு' : 'Sign out'}</Text></TouchableOpacity></View></SafeAreaView>;
   }
 
-  if (Platform.OS === 'web' && shouldRenderFamilyViewer('/', role, !!user)) return <FamilyViewer />;
+  if (Platform.OS === 'web' && shouldRenderFamilyViewer(window.location.pathname, role, !!user)) return <FamilyViewer
+    onLanguageChange={value => void changeLanguage(value)}
+    onOwnerLogin={() => {
+      const showLogin = () => setWebEntry('owner-login');
+      if (auth) {
+        void signOut(auth).then(showLogin).catch((error: any) => {
+          Alert.alert('Could not open owner login', error?.message || 'Please try again.');
+        });
+      } else {
+        showLogin();
+      }
+    }}
+  />;
 
   const syncLabel = demoMode || !user ? 'LOCAL PREVIEW' : syncState;
   const canEdit = role === 'owner' && !demoMode && !!user;
@@ -1855,8 +1852,5 @@ function AppContent() {
 }
 
 export default function App() {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && shouldRenderFamilyViewer(window.location.pathname, null)) {
-    return <SafeAreaProvider><FamilyViewer /></SafeAreaProvider>;
-  }
   return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
 }

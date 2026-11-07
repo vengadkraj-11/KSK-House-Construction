@@ -43,12 +43,13 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   await seed('projects/ksk/attachments/diary1/images/photo1',{recordId:stringValue('diary1'),imageBase64:stringValue('YWJj'),fileName:stringValue('site.jpg'),mimeType:stringValue('image/jpeg'),createdBy:stringValue('owner'),createdAt:{timestampValue:new Date().toISOString()}});
 
   assert.equal((await request('projects/ksk/sheets/sheet1','owner')).status,200);
-  assert.equal((await request('projects/ksk/sheets/sheet1','viewer')).status,200);
+  assert.equal((await request('projects/ksk/sheets/project_dashboard','viewer')).status,200);
+  assert.equal((await request('projects/ksk/sheets/sheet1','viewer')).status,403);
   assert.equal((await request('projects/ksk/bills/payment1/images/receipt1','viewer')).status,200);
-  assert.equal((await request('projects/ksk/attachments/diary1/images/photo1','viewer')).status,200);
+  assert.equal((await request('projects/ksk/attachments/diary1/images/photo1','viewer')).status,403);
   assert.equal((await request('projects/ksk/payments/payment1','viewer')).status,200);
-  assert.equal((await request('projects/ksk/login_history/viewer-session','viewer')).status,200);
-  assert.equal((await request('projects/ksk/activity/activity1','viewer')).status,200);
+  assert.equal((await request('projects/ksk/login_history/viewer-session','viewer')).status,403);
+  assert.equal((await request('projects/ksk/activity/activity1','viewer')).status,403);
   assert.equal((await request('projects/ksk/login_history/owner-session','viewer')).status,403);
   assert.equal((await request('projects/ksk/login_history/owner-session','owner')).status,200);
   for(const uid of ['owner','viewer']) {
@@ -56,7 +57,8 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
     assert.equal(listed.status,200,await listed.text());
   }
   assert.equal((await request('projects/ksk/contracts/contract1','viewer')).status,200);
-  for (const path of ['projects/ksk/stock/stock1','projects/ksk/progress/progress1','projects/ksk/diary/diary1']) assert.equal((await request(path,'viewer')).status,200);
+  for (const path of ['projects/ksk/stock/stock1','projects/ksk/progress/progress1']) assert.equal((await request(path,'viewer')).status,200);
+  assert.equal((await request('projects/ksk/diary/diary1','viewer')).status,403);
   assert.equal((await request('projects/ksk/approvals/approval1','viewer')).status,403);
   assert.equal((await request('projects/ksk/reminders/reminder1','viewer')).status,403);
   for (const path of ['projects/ksk/contracts/contract1','projects/ksk/stock/stock1','projects/ksk/progress/progress1','projects/ksk/diary/diary1','projects/ksk/approvals/approval1','projects/ksk/reminders/reminder1']) {
@@ -165,11 +167,11 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
     assert.equal((await request(path,'owner','DELETE')).status,200,`Project owners may delete ${path}.`);
   }
 
-  const createViewer=async(uid,phone,preferredLanguage='en')=>{
+  const createViewer=async(uid,phone,preferredLanguage='en',provider='password')=>{
     const access=`projects/${project}/databases/(default)/documents/viewerAccess/${uid}`;
     return commit(uid,[
       {update:{name:access,fields:{uid:stringValue(uid),fullName:stringValue('Family Viewer'),normalizedMobileNumber:stringValue(phone),status:stringValue('pending'),preferredLanguage:stringValue(preferredLanguage)}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}
-    ],undefined,'password');
+    ],undefined,provider);
   };
   const decideViewer=async(uid,phone,status)=>{
     const access=`projects/${project}/databases/(default)/documents/viewerAccess/${uid}`;
@@ -197,27 +199,24 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal(selfApproval.status,403,'Viewers cannot change their own approval status.');
   const typedNumberOnly=await request('projects/ksk/sheets/sheet1','different-user','GET',undefined,phone,'password');
   assert.equal(typedNumberOnly.status,403,'Typing an approved mobile number does not authenticate the approved account.');
-  const nonPassword=await commit('custom-viewer',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/custom-viewer`,fields:{uid:stringValue('custom-viewer'),fullName:stringValue('Custom Viewer'),normalizedMobileNumber:stringValue('+15550000000'),status:stringValue('pending'),preferredLanguage:stringValue('en')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
-  assert.equal(nonPassword.status,403,'Viewer registration requires a password-authenticated Firebase account.');
+  const unsupportedProvider=await commit('custom-viewer',[{update:{name:`projects/${project}/databases/(default)/documents/viewerAccess/custom-viewer`,fields:{uid:stringValue('custom-viewer'),fullName:stringValue('Custom Viewer'),normalizedMobileNumber:stringValue('+15550000000'),status:stringValue('pending'),preferredLanguage:stringValue('en')}},currentDocument:{exists:false},updateTransforms:[{fieldPath:'registeredAt',setToServerValue:'REQUEST_TIME'},{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]);
+  assert.equal(unsupportedProvider.status,403,'Viewer registration rejects unsupported authentication providers.');
 
   const approved=await decideViewer('password-viewer',phone,'approved');
   assert.equal(approved.status,200,await approved.text());
   const approvedRequest=await request('viewerAccess/password-viewer','password-viewer','GET',undefined,undefined,'password');
   const approvalSeconds=Math.floor(Date.parse((await approvedRequest.json()).fields.approvalDate.timestampValue)/1000);
-  assert.equal((await request('projects/ksk/sheets/daily_expenses','password-viewer','GET',undefined,undefined,'password',0)).status,403,'A session created before approval must sign in again before activation.');
-  const waitForFreshLogin=Math.max(0,(approvalSeconds+1)*1000-Date.now()+10);
-  if(waitForFreshLogin) await new Promise(resolve=>setTimeout(resolve,waitForFreshLogin));
-  const freshAuthTime=Math.floor(Date.now()/1000);
-  assert.ok(freshAuthTime>approvalSeconds,'The returning login must be newer than the approval timestamp.');
+  assert.ok(approvalSeconds>0,'Owner approval is recorded against the authenticated viewer UID.');
+  const persistentAuthTime=0;
   await seed('projects/ksk/contracts/contract1',{person:stringValue('Approved viewer test'),agreedAmount:numberValue(100)});
   await seed('projects/ksk/stock/stock1',{material:stringValue('Approved viewer test'),quantity:numberValue(1)});
   await seed('projects/ksk/progress/progress1',{stage:stringValue('Approved viewer test'),percent:numberValue(25)});
   await seed('projects/ksk/diary/diary1',{title:stringValue('Approved viewer test')});
   await seed('projects/ksk/reminders/reminder1',{title:stringValue('Owner only')});
   await seed('projects/ksk/payments/phone-viewer-target',{person:stringValue('Protected')});
-  assert.equal((await request('projects/ksk/sheets/daily_expenses','password-viewer','GET',undefined,undefined,'password',freshAuthTime)).status,200,'Owner approval grants reads after a fresh password sign-in.');
-  assert.equal((await request('projects/ksk/sheets/project_dashboard','password-viewer','GET',undefined,undefined,'password',freshAuthTime)).status,200,'Approved viewers can read the dashboard workbook data.');
-  assert.equal((await request('projects/ksk/sheets/quotation_compare','password-viewer','GET',undefined,undefined,'password',freshAuthTime)).status,403,'Family viewers cannot read owner-only quotation data.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','password-viewer','GET',undefined,undefined,'password',persistentAuthTime)).status,200,'Owner approval activates the existing authenticated persistent session.');
+  assert.equal((await request('projects/ksk/sheets/project_dashboard','password-viewer','GET',undefined,undefined,'password',persistentAuthTime)).status,200,'Approved viewers can read the dashboard workbook data.');
+  assert.equal((await request('projects/ksk/sheets/quotation_compare','password-viewer','GET',undefined,undefined,'password',persistentAuthTime)).status,403,'Family viewers cannot read owner-only quotation data.');
   assert.equal((await request('projects/ksk/bills/payment1/images/receipt1','password-viewer','GET',undefined,undefined,'password')).status,200,'Approved viewers can read authorized receipts.');
   for(const path of ['projects/ksk/payments/phone-viewer-target','projects/ksk/contracts/contract1','projects/ksk/stock/stock1','projects/ksk/progress/progress1']){
     assert.equal((await request(path,'password-viewer','GET',undefined,undefined,'password')).status,200,`Approved viewers can read ${path}.`);
@@ -229,7 +228,7 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const permittedSheetIds=['project_dashboard','project_setup','materials_ground','materials_first','materials_boq','labour_work','professional_fees','misc_equipment','daily_expenses','work_schedule','floor_summary'];
   const permittedSheetQuery=await fetch(`${root}/projects/ksk:runQuery`,{
     method:'POST',
-    headers:{Authorization:`Bearer ${token('password-viewer',undefined,'password',freshAuthTime)}`,'Content-Type':'application/json'},
+    headers:{Authorization:`Bearer ${token('password-viewer',undefined,'password',persistentAuthTime)}`,'Content-Type':'application/json'},
     body:JSON.stringify({structuredQuery:{
       from:[{collectionId:'sheets'}],
       where:{fieldFilter:{field:{fieldPath:'__name__'},op:'IN',value:{arrayValue:{values:permittedSheetIds.map(id=>({referenceValue:`projects/${project}/databases/(default)/documents/projects/ksk/sheets/${id}`}))}}}}
@@ -238,7 +237,7 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal(permittedSheetQuery.status,200,await permittedSheetQuery.text(),'The restricted family sheet subscription can read its explicit allowlist.');
   const forbiddenSheetQuery=await fetch(`${root}/projects/ksk:runQuery`,{
     method:'POST',
-    headers:{Authorization:`Bearer ${token('password-viewer',undefined,'password',freshAuthTime)}`,'Content-Type':'application/json'},
+    headers:{Authorization:`Bearer ${token('password-viewer',undefined,'password',persistentAuthTime)}`,'Content-Type':'application/json'},
     body:JSON.stringify({structuredQuery:{
       from:[{collectionId:'sheets'}],
       where:{fieldFilter:{field:{fieldPath:'__name__'},op:'IN',value:{arrayValue:{values:[{referenceValue:`projects/${project}/databases/(default)/documents/projects/ksk/sheets/quotation_compare`}]}}}}
@@ -247,7 +246,7 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   assert.equal(forbiddenSheetQuery.status,403,'The family viewer cannot query owner-only workbook sheets.');
   const savedLanguage=await request('viewerAccess/password-viewer','password-viewer','GET',undefined,undefined,'password');
   assert.equal((await savedLanguage.json()).fields.preferredLanguage.stringValue,'ta','The selected language persists on the access request.');
-  assert.equal((await request('projects/ksk/sheets/daily_expenses','password-viewer','GET',undefined,phone,'password',freshAuthTime)).status,200,'A returning password login for the same UID does not require approval again.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','password-viewer','GET',undefined,phone,'password',persistentAuthTime)).status,200,'A returning password login for the same UID does not require approval again.');
   assert.equal((await request('viewerAccess/password-viewer','password-viewer','PATCH',{fields:{preferredLanguage:stringValue('en'),updatedAt:{timestampValue:new Date().toISOString()}}},undefined,'password')).status,403,'Client profile edits cannot forge a server timestamp.');
   assert.equal((await request('projects/ksk/sheets/daily_expenses','password-viewer','PATCH',{fields:{updatedBy:stringValue('password-viewer')}},undefined,'password')).status,403,'Approved viewers cannot update project sheets.');
   assert.equal((await request('projects/ksk/bills/payment1/images/receipt1','password-viewer','DELETE',undefined,undefined,'password')).status,403,'Approved viewers cannot delete bill attachments.');
@@ -281,6 +280,19 @@ test('Firestore rules preserve member receipt reads and owner-only writes',async
   const rejected=await decideViewer('rejected-viewer',rejectedPhone,'rejected');
   assert.equal(rejected.status,200,await rejected.text());
   assert.equal((await request('projects/ksk/sheets/sheet1','rejected-viewer')).status,403,'Rejected registrations cannot read project data.');
+
+  const anonymousPhone='+15550001234';
+  const anonymousRequest=await createViewer('anonymous-viewer',anonymousPhone,'ta','anonymous');
+  assert.equal(anonymousRequest.status,200,await anonymousRequest.text(),'A Firebase anonymous session can submit a UID-bound request.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','anonymous-viewer','GET',undefined,undefined,'anonymous')).status,403,'An anonymous pending request has no project access.');
+  const anonymousApproval=await decideViewer('anonymous-viewer',anonymousPhone,'approved');
+  assert.equal(anonymousApproval.status,200,await anonymousApproval.text());
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','anonymous-viewer','GET',undefined,undefined,'anonymous',0)).status,200,'Approval activates the same persistent anonymous UID without SMS or a second registration.');
+  assert.equal((await request('projects/ksk/bills/payment1/images/receipt1','anonymous-viewer','GET',undefined,undefined,'anonymous',0)).status,200,'Approved anonymous sessions can read authorized receipts.');
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','anonymous-viewer','PATCH',{fields:{updatedBy:stringValue('anonymous-viewer')}},undefined,'anonymous',0)).status,403,'Approved anonymous family sessions remain read-only.');
+  const anonymousRevocation=await decideViewer('anonymous-viewer',anonymousPhone,'revoked');
+  assert.equal(anonymousRevocation.status,200,await anonymousRevocation.text());
+  assert.equal((await request('projects/ksk/sheets/daily_expenses','anonymous-viewer','GET',undefined,undefined,'anonymous',0)).status,403,'Revocation blocks the previously authenticated persistent session immediately.');
 
   const ownerViewerList=await fetch(`${root}:runQuery`,{
     method:'POST',

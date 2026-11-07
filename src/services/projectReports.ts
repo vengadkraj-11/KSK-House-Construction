@@ -9,7 +9,7 @@ import {renderReceiptSection} from './reportReceipts';
 import {ProjectRecord} from './projectRecords';
 import {summarizeContracts, summarizeInventory} from './recordMath';
 import {paymentStatementAgreements, paymentStatementLedger, summarizePaymentRecords} from './paymentMath';
-import {downloadBase64File, printHtmlInBrowser} from './webFiles';
+import {downloadBase64File, printHtmlInBrowser, printHtmlInWindow} from './webFiles';
 
 type Records=Record<string,ProjectRecord[]>;
 const amount=(row:ProjectRecord)=>Number(row.amount)||0;
@@ -152,14 +152,18 @@ async function receiptImagesForPayments(payments:ProjectRecord[]){
 
   return result;
 }
-async function sharePdf(html:string,title:string){
-  if(printHtmlInBrowser(html))return;
+async function sharePdf(html:string,title:string,browserWindow?:Window|null){
+  if(typeof window!=='undefined'){
+    if(!browserWindow)throw new Error('Allow pop-ups for this site, then retry the PDF export.');
+    if(!printHtmlInWindow(html,title,browserWindow))throw new Error('The PDF print window could not be prepared. Close it and retry.');
+    return;
+  }
   const result=await Print.printToFileAsync({html});
   if(!(await Sharing.isAvailableAsync()))throw new Error('File sharing is unavailable on this device.');
   await Sharing.shareAsync(result.uri,{mimeType:'application/pdf',dialogTitle:title});
 }
 function pdfStyles(){return `<style>@page{size:A4;margin:16mm}body{font:10pt Arial,sans-serif;color:#18352b;line-height:1.4}header{border-bottom:3px solid #176b4b;padding-bottom:12px;margin-bottom:18px}h1{font-size:20pt;margin:0 0 4px}h2{font-size:13pt;color:#176b4b;margin:18px 0 7px}table{border-collapse:collapse;width:100%;table-layout:fixed;margin:8px 0 16px}th,td{border:1px solid #ccd8d0;padding:7px;text-align:left;overflow-wrap:anywhere}th{background:#e6f1ec;width:28%}.amount{font-size:19pt;font-weight:bold;color:#176b4b}.footer{position:fixed;bottom:0;border-top:1px solid #ccd8d0;padding-top:5px;width:100%;font-size:8pt;color:#718078}.receipt{page-break-before:always}.receipt img{display:block;max-width:100%;max-height:245mm;object-fit:contain;margin:14px auto}.muted{color:#718078}</style>`;}
-export async function exportPaymentReceiptPdf(payment:ProjectRecord,sheets:any={},allPayments:ProjectRecord[]= [payment],contracts:ProjectRecord[]=[]):Promise<void>{
+export async function exportPaymentReceiptPdf(payment:ProjectRecord,sheets:any={},allPayments:ProjectRecord[]= [payment],contracts:ProjectRecord[]=[],browserWindow?:Window|null):Promise<void>{
   const setup=sheets?.project_setup?.values||[];
   const setting=(pattern:RegExp)=>String(setup.slice(1).find((row:any[])=>pattern.test(String(row?.[0]||'')))?.[1]||'').trim();
   const projectName='KSK Construction';
@@ -241,14 +245,15 @@ ${evidence}
 </body>
 </html>`;
 
-  await sharePdf(html,`KSK Payment Receipt ${id}`);
+  await sharePdf(html,`KSK Payment Receipt ${id}`,browserWindow);
 }
 export async function exportPaymentStatementPdf(
   payments:ProjectRecord[],
   contracts:ProjectRecord[],
   sheets:any={},
   includeImages=false,
-  allPayments:ProjectRecord[]=payments
+  allPayments:ProjectRecord[]=payments,
+  browserWindow?:Window|null
 ):Promise<void>{
   const setup=sheets?.project_setup?.values||[];
 
@@ -392,5 +397,5 @@ ${evidence}
 </body>
 </html>`;
 
-  await sharePdf(html,'KSK Construction payment statement');
+  await sharePdf(html,'KSK Construction payment statement',browserWindow);
 }

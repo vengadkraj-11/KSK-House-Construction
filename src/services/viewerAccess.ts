@@ -26,7 +26,21 @@ const accessPath = (uid: string) => doc(db!, 'viewerAccess', uid);
 const phonePath = (phone: string) => doc(db!, 'viewerPhoneIndex', phone);
 
 export function normalizePhoneNumber(value: string): string {
-  return value.trim().replace(/[\s().-]/g, '');
+  const normalized = value.trim().replace(/[\s().-]/g, '');
+  return /^\d{10}$/.test(normalized) ? `+91${normalized}` : normalized;
+}
+
+export function canContinueWithApprovedSession(
+  authenticatedUid: string | null | undefined,
+  request: ViewerAccessRequest | null | undefined,
+  mobileNumber: string
+): boolean {
+  return Boolean(
+    authenticatedUid &&
+    request?.uid === authenticatedUid &&
+    request.status === 'approved' &&
+    normalizePhoneNumber(mobileNumber) === request.normalizedMobileNumber
+  );
 }
 
 export async function registerViewerRequest(

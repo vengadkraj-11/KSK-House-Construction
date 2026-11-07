@@ -3,8 +3,7 @@ import {
   ActivityIndicator, Platform, ScrollView, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import {
-  browserLocalPersistence, createUserWithEmailAndPassword, getIdTokenResult, onAuthStateChanged,
-  setPersistence, signInWithEmailAndPassword, signOut, User
+  browserLocalPersistence, onAuthStateChanged, setPersistence, signInAnonymously, signOut, User
 } from 'firebase/auth';
 import {doc, getDoc} from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -16,7 +15,7 @@ import {subscribeViewerSheets} from '../services/projectSync';
 import {ProjectRecord, subscribeProjectRecords} from '../services/projectRecords';
 import {summarizeContracts, summarizeInventory} from '../services/recordMath';
 import {
-  normalizePhoneNumber, registerViewerRequest, saveViewerLanguage, subscribeViewerRequest,
+  canContinueWithApprovedSession, normalizePhoneNumber, registerViewerRequest, saveViewerLanguage, subscribeViewerRequest,
   saveLegacyViewerLanguage, ViewerAccessRequest, ViewerLanguage
 } from '../services/viewerAccess';
 import {getPreferredLanguage, savePreferredLanguage} from '../services/websiteAccess';
@@ -33,7 +32,8 @@ const tMap: Record<string, string> = {
   'Work Progress': 'பணி முன்னேற்றம்',
   'Total project cost': 'திட்டத்தின் மொத்தச் செலவு',
   'Total daily expenses': 'மொத்த தினசரிச் செலவுகள்',
-  'Total payments': 'மொத்தக் கட்டணங்கள்',
+  'Total paid': 'மொத்தம் செலுத்தியது',
+  'Dashboard totals use Daily Expenses; payment records are separate and may overlap.': 'முகப்பு மொத்தங்கள் தினசரிச் செலவுகளைப் பயன்படுத்துகின்றன; கட்டணப் பதிவுகள் தனியானவை, ஒரே செலவைக் குறிக்கலாம்.',
   'Agreement balance': 'ஒப்பந்த மீதித் தொகை',
   'Material summary': 'பொருள் சுருக்கம்',
   'Overall work progress': 'மொத்தப் பணி முன்னேற்றம்',
@@ -57,6 +57,15 @@ const tMap: Record<string, string> = {
   'Change language': 'மொழியை மாற்று',
   'English': 'ஆங்கிலம்',
   'Tamil': 'தமிழ்',
+  'Owner Login': 'உரிமையாளர் உள்நுழைவு',
+  'Name': 'பெயர்',
+  'Continue / Submit': 'தொடரவும் / சமர்ப்பிக்கவும்',
+  'Continue': 'தொடரவும்',
+  'The authenticated session and mobile number do not match an approved member.': 'அங்கீகரிக்கப்பட்ட உறுப்பினரின் உள்நுழைவும் மொபைல் எண்ணும் பொருந்தவில்லை.',
+  'If this device lost its saved session, submit a new request and ask the owner to verify it.': 'இந்தச் சாதனத்தின் சேமித்த அமர்வு நீங்கியிருந்தால், புதிய கோரிக்கையைச் சமர்ப்பித்து உரிமையாளரிடம் சரிபார்க்கச் சொல்லவும்.',
+  'Enter a mobile number with its country code.': 'நாட்டுக் குறியீட்டுடன் மொபைல் எண்ணை உள்ளிடவும்.',
+  'Enter your full name (2–120 characters).': 'உங்கள் முழுப் பெயரை உள்ளிடவும் (2–120 எழுத்துகள்).',
+  'Secure family access is unavailable. Contact the project owner.': 'பாதுகாப்பான குடும்ப அணுகல் கிடைக்கவில்லை. திட்ட உரிமையாளரைத் தொடர்புகொள்ளவும்.',
   'Agreement': 'ஒப்பந்தம்',
   'Agreed': 'ஒப்புக்கொண்ட தொகை',
   'Paid': 'செலுத்தப்பட்டது',
@@ -80,7 +89,8 @@ const tMap: Record<string, string> = {
   'Mobile number': 'மொபைல் எண்',
   'Include country code, e.g. +91': 'நாட்டுக் குறியீட்டுடன் உள்ளிடவும், எ.கா. +91',
   'Owner approval required': 'உரிமையாளர் அனுமதி தேவை',
-  'Your request is pending owner approval. Project information remains locked until approval.': 'உங்கள் கோரிக்கை உரிமையாளர் அனுமதிக்காகக் காத்திருக்கிறது. அனுமதி கிடைக்கும் வரை திட்டத் தகவல் பூட்டப்பட்டிருக்கும்.',
+  'Your access request is awaiting owner approval.': 'உங்கள் அணுகல் கோரிக்கை உரிமையாளர் அனுமதிக்காகக் காத்திருக்கிறது.',
+  'Project information remains locked until approval.': 'அனுமதி கிடைக்கும் வரை திட்டத் தகவல் பூட்டப்பட்டிருக்கும்.',
   'Access rejected': 'அணுகல் நிராகரிக்கப்பட்டது',
   'Access revoked': 'அணுகல் நீக்கப்பட்டது',
   'This account does not currently have family viewer access. Contact the project owner.': 'இந்தக் கணக்கிற்கு தற்போது குடும்பப் பார்வையாளர் அணுகல் இல்லை. திட்ட உரிமையாளரைத் தொடர்புகொள்ளவும்.',
@@ -101,9 +111,7 @@ const tMap: Record<string, string> = {
   'workbook items': 'பணிப்புத்தக உருப்படிகள்',
   'No access request exists for this account yet.': 'இந்தக் கணக்கிற்கு அணுகல் கோரிக்கை இன்னும் இல்லை.',
   'An owner account is currently signed in. Sign out, then create a family viewer access request.': 'உரிமையாளர் கணக்கு தற்போது உள்நுழைந்துள்ளது. வெளியேறி குடும்பப் பார்வையாளர் அணுகல் கோரிக்கையை உருவாக்கவும்.',
-  'Enter a mobile number in international format, including the + country code.': 'நாட்டுக் குறியீட்டுடன் சர்வதேச வடிவில் மொபைல் எண்ணை உள்ளிடவும்.',
   'Enter your full name.': 'உங்கள் முழுப் பெயரை உள்ளிடவும்.',
-  'Enter your full name (2–120 characters).': 'உங்கள் முழுப் பெயரை உள்ளிடவும் (2–120 எழுத்துகள்).',
   'The access request could not be saved.': 'அணுகல் கோரிக்கையைச் சேமிக்க முடியவில்லை.',
   'Could not save your language preference.': 'மொழி விருப்பத்தைச் சேமிக்க முடியவில்லை.',
   'Could not verify your approved sign-in. Sign out and sign in again.': 'உங்கள் அனுமதிக்கப்பட்ட உள்நுழைவைச் சரிபார்க்க முடியவில்லை. வெளியேறி மீண்டும் உள்நுழையவும்.',
@@ -188,7 +196,7 @@ const tMap: Record<string, string> = {
 const text = (language: ViewerLanguage, english: string) => language === 'ta' ? tMap[english] || english : english;
 function localizedError(issue: any, language: ViewerLanguage, fallback: string) {
   const code = String(issue?.code || '');
-  if (code === 'auth/operation-not-allowed') return text(language, 'Email and password sign-in is unavailable. Please contact the project owner.');
+  if (code === 'auth/operation-not-allowed') return text(language, 'Secure family access is unavailable. Contact the project owner.');
   if (['auth/invalid-credential', 'auth/invalid-login-credentials', 'auth/user-not-found', 'auth/wrong-password', 'auth/invalid-email'].includes(code)) return text(language, 'The email or password is incorrect.');
   if (code === 'auth/weak-password') return text(language, 'Choose a password with at least 6 characters.');
   if (code === 'auth/email-already-in-use') return text(language, 'An account already uses this email. Sign in instead.');
@@ -217,17 +225,33 @@ function StatusPanel({title, detail, color = colors.primary}: {title: string; de
   </View>;
 }
 
-function AccessForm({language, onLanguageChange, onSignIn, onRequestCreated}: {
+function AccessHeader({language, onLanguageChange, onOwnerLogin}: {
   language: ViewerLanguage;
+  onLanguageChange: (value: ViewerLanguage) => void;
+  onOwnerLogin?: () => void;
+}) {
+  return <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18}}>
+    <View style={{flexDirection: 'row', gap: 12}}>
+      {(['en', 'ta'] as const).map(value => <TouchableOpacity key={value} accessibilityRole="button" accessibilityState={{selected: language === value}} onPress={() => onLanguageChange(value)}>
+        <Text style={{fontSize: 12, color: language === value ? colors.primary : colors.inkMuted, fontWeight: '800'}}>{value === 'en' ? 'English' : 'தமிழ்'}</Text>
+      </TouchableOpacity>)}
+    </View>
+    {onOwnerLogin ? <TouchableOpacity accessibilityRole="link" onPress={onOwnerLogin} style={{padding: 5}}>
+      <Text style={{fontSize: 11, color: colors.inkMuted, fontWeight: '700'}}>{text(language, 'Owner Login')}</Text>
+    </TouchableOpacity> : null}
+  </View>;
+}
+
+function AccessForm({language, user, onLanguageChange, onSignIn, onRequestCreated, onOwnerLogin}: {
+  language: ViewerLanguage;
+  user?: User | null;
   onLanguageChange: (value: ViewerLanguage) => void;
   onSignIn: (user: User) => void;
   onRequestCreated: () => void;
+  onOwnerLogin?: () => void;
 }) {
-  const [mode, setMode] = useState<'register' | 'login'>('login');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -235,22 +259,14 @@ function AccessForm({language, onLanguageChange, onSignIn, onRequestCreated}: {
     if (!auth || busy) return;
     setError('');
     try {
-      const normalizedEmail = email.trim();
-      if (!normalizedEmail || !password) throw new Error('Enter your email and password.');
-      let normalizedPhone = '';
-      if (mode === 'register') {
-        normalizedPhone = normalizePhoneNumber(phone);
-        if (!/^\+[1-9]\d{7,14}$/.test(normalizedPhone)) throw new Error('Enter a mobile number in international format, including the + country code.');
-        if (fullName.trim().length < 2) throw new Error('Enter your full name (2–120 characters).');
-        if (password.length < 6) throw new Error('Choose a password with at least 6 characters.');
-      }
+      const normalizedPhone = normalizePhoneNumber(phone);
+      if (!/^\+[1-9]\d{7,14}$/.test(normalizedPhone)) throw new Error('Enter a mobile number with its country code.');
+      if (fullName.trim().length < 2 || fullName.trim().length > 120) throw new Error('Enter your full name (2–120 characters).');
       setBusy(true);
-      const credential = mode === 'register'
-        ? await createUserWithEmailAndPassword(auth, normalizedEmail, password)
-        : await signInWithEmailAndPassword(auth, normalizedEmail, password);
-      if (mode === 'register') await registerViewerRequest(credential.user.uid, normalizedPhone, fullName, language);
-      onSignIn(credential.user);
-      if (mode === 'register') onRequestCreated();
+      const requester = user || (await signInAnonymously(auth)).user;
+      await registerViewerRequest(requester.uid, normalizedPhone, fullName, language);
+      onSignIn(requester);
+      onRequestCreated();
     } catch (issue: any) {
       const message = localizedError(issue, language, 'The access request could not be saved.');
       setError(message);
@@ -259,37 +275,20 @@ function AccessForm({language, onLanguageChange, onSignIn, onRequestCreated}: {
     }
   };
 
-  return <ScrollView contentContainerStyle={{flexGrow: 1, justifyContent: 'center', padding: 20, backgroundColor: colors.canvas}}>
-    <View style={{alignSelf: 'center', width: 58, height: 58, borderRadius: 18, backgroundColor: colors.dark, alignItems: 'center', justifyContent: 'center', marginBottom: 14}}>
-      <Text style={{fontSize: 18, color: '#FFF', fontWeight: '900'}}>KSK</Text>
-    </View>
-    <Text style={{fontSize: 25, fontWeight: '900', color: colors.ink, textAlign: 'center'}}>KSK House Construction</Text>
-    <Text style={{fontSize: 13, color: colors.inkMuted, textAlign: 'center', marginTop: 5}}>{text(language, 'Family viewer')} · {text(language, 'Read only')}</Text>
-    <Card>
-      <Text style={{fontSize: 18, fontWeight: '900', color: colors.ink}}>{text(language, mode === 'login' ? 'Family Viewer Login' : 'Create access request')}</Text>
-      <Text style={{fontSize: 13, color: colors.inkMuted, marginTop: 8}}>{text(language, 'Choose your preferred language')}</Text>
-      <View style={{flexDirection: 'row', gap: 9, marginTop: 12}}>
-        <View style={{flex: 1}}><ActionButton label="English" secondary={language !== 'en'} onPress={() => onLanguageChange('en')}/></View>
-        <View style={{flex: 1}}><ActionButton label="தமிழ்" secondary={language !== 'ta'} onPress={() => onLanguageChange('ta')}/></View>
+  return <ScrollView contentContainerStyle={{flexGrow: 1, justifyContent: 'center', padding: 18, backgroundColor: colors.canvas}}>
+    <View style={{width: '100%', maxWidth: 480, alignSelf: 'center'}}>
+      <AccessHeader language={language} onLanguageChange={onLanguageChange} onOwnerLogin={onOwnerLogin}/>
+      <View style={{alignSelf: 'center', width: 54, height: 54, borderRadius: 17, backgroundColor: colors.dark, alignItems: 'center', justifyContent: 'center', marginBottom: 12}}>
+        <Text style={{fontSize: 17, color: '#FFF', fontWeight: '900'}}>KSK</Text>
       </View>
-      {mode === 'register' ? <>
-        <TextInput value={fullName} onChangeText={setFullName} placeholder={text(language, 'Full name')} autoComplete="name" style={inputStyle}/>
+      <Text style={{fontSize: 24, fontWeight: '900', color: colors.ink, textAlign: 'center', marginBottom: 20}}>KSK House Construction</Text>
+      <Card>
+        <TextInput value={fullName} onChangeText={setFullName} placeholder={text(language, 'Name')} autoComplete="name" style={inputStyle}/>
         <TextInput value={phone} onChangeText={setPhone} placeholder={text(language, 'Mobile number')} keyboardType="phone-pad" autoComplete="tel" style={inputStyle}/>
-        <Text style={{fontSize: 11, color: colors.inkMuted, marginTop: -4, marginBottom: 8}}>{text(language, 'Include country code, e.g. +91')}</Text>
-        <Text style={{fontSize: 11, color: colors.inkMuted, marginBottom: 4}}>{text(language, 'Your mobile number is contact information, not a sign-in credential.')}</Text>
-        <Text style={{fontSize: 11, color: colors.inkMuted, lineHeight: 17, marginBottom: 4}}>{text(language, 'Use your private email and password to sign in. Firebase Authentication protects this credential; it is never saved in project records.')}</Text>
-      </> : null}
-      <TextInput value={email} onChangeText={setEmail} placeholder={text(language, 'Email address')} keyboardType="email-address" autoCapitalize="none" autoComplete="email" style={inputStyle}/>
-      <TextInput value={password} onChangeText={setPassword} placeholder={text(language, 'Password')} secureTextEntry autoComplete={mode === 'register' ? 'new-password' : 'current-password'} style={inputStyle}/>
-      <ActionButton label={busy ? '…' : text(language, mode === 'login' ? 'Sign in' : 'Create access request')} onPress={() => void submit()} disabled={busy}/>
-      <TouchableOpacity accessibilityRole="button" onPress={() => {setMode(mode === 'register' ? 'login' : 'register'); setError('');}} style={{padding: 10, alignItems: 'center'}}>
-        <Text style={{fontSize: 12, color: colors.primary, fontWeight: '800'}}>{text(language, mode === 'register' ? 'I have an account' : 'Create access request')}</Text>
-      </TouchableOpacity>
-      {Platform.OS === 'web' ? <TouchableOpacity accessibilityRole="button" onPress={() => {window.location.href = '/';}} style={{padding: 8, alignItems: 'center'}}>
-        <Text style={{fontSize: 11, color: colors.inkMuted, fontWeight: '700'}}>{text(language, 'Back to access selection')}</Text>
-      </TouchableOpacity> : null}
-      {error ? <Text accessibilityRole="alert" style={{fontSize: 12, color: colors.danger, lineHeight: 18, marginTop: 9}}>{error}</Text> : null}
-    </Card>
+        <View style={{marginTop: 4}}><ActionButton label={busy ? '…' : text(language, 'Continue / Submit')} onPress={() => void submit()} disabled={busy}/></View>
+        {error ? <Text accessibilityRole="alert" style={{fontSize: 12, color: colors.danger, lineHeight: 18, marginTop: 9}}>{text(language, error)}</Text> : null}
+      </Card>
+    </View>
   </ScrollView>;
 }
 
@@ -317,7 +316,6 @@ function FamilyData({uid, language, onLanguageChange, onSignOut, sheets, records
   const materialCounts = useMemo(() => countMaterials(sheets), [sheets]);
   const inventory = useMemo(() => summarizeInventory(records.stock || []), [records.stock]);
   const agreements = useMemo(() => summarizeContracts(records.contracts || [], records.payments || []), [records.contracts, records.payments]);
-  const totalPaid = (records.payments || []).reduce((sum, record) => sum + (Number(record.amount) || 0), 0);
   const expenseSheet = sheets.daily_expenses;
   const expenseHeaders = headersForSheet('daily_expenses', expenseSheet || {values: []});
   const expenses = expenseSheet ? meaningfulRows(expenseSheet).map(({row, index}) => ({
@@ -343,9 +341,10 @@ function FamilyData({uid, language, onLanguageChange, onSignOut, sheets, records
     <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 8}}>
       <StatusPanel title={t('Total project cost')} detail={money(dashboard.totalBudget)}/>
       <StatusPanel title={t('Total daily expenses')} detail={money(dashboard.dailyExpenses)} color={colors.gold}/>
-      <StatusPanel title={t('Total payments')} detail={money(totalPaid)}/>
+      <StatusPanel title={t('Total paid')} detail={money(dashboard.totalPaid)}/>
       <StatusPanel title={t('Agreement balance')} detail={money(agreements.reduce((sum: number, entry: any) => sum + entry.balance, 0))}/>
     </View>
+    <Text style={bodyStyle}>{t('Dashboard totals use Daily Expenses; payment records are separate and may overlap.')}</Text>
     <Card>
       <Text style={headingStyle}>{t('Material summary')}</Text>
       <Text style={bodyStyle}>{t('Received')}: {materialCounts.received.toLocaleString('en-IN')} · {t('Available')}: {inventory.reduce((sum, item) => sum + item.available, 0).toLocaleString('en-IN')} · {t('Used')}: {inventory.reduce((sum, item) => sum + item.used, 0).toLocaleString('en-IN')}</Text>
@@ -492,49 +491,42 @@ function Empty({language}: {language: ViewerLanguage}) {
   return <Card><Text style={{fontSize: 12, color: colors.inkMuted}}>{text(language, 'No records available yet.')}</Text></Card>;
 }
 
-function FirstRegistration({user, language, onLanguageChange, onSignOut}: {
+function ApprovedContinueForm({user, request, language, onLanguageChange, onOwnerLogin, onContinue}: {
   user: User;
+  request: ViewerAccessRequest;
   language: ViewerLanguage;
   onLanguageChange: (value: ViewerLanguage) => void;
-  onSignOut: () => void;
+  onOwnerLogin?: () => void;
+  onContinue: () => void;
 }) {
-  const [fullName, setFullName] = useState(user.displayName || '');
   const [phone, setPhone] = useState('');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const t = (value: string) => text(language, value);
-  const submit = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      await registerViewerRequest(user.uid, phone, fullName, language);
-    } catch (issue: any) {
-      setError(localizedError(issue, language, 'The access request could not be saved.'));
-    } finally {
-      setBusy(false);
+  const submit = () => {
+    if (canContinueWithApprovedSession(user.uid, request, phone)) {
+      setError('');
+      onContinue();
+    } else {
+      setError(t('The authenticated session and mobile number do not match an approved member.'));
     }
   };
   return <ScrollView contentContainerStyle={{flexGrow: 1, justifyContent: 'center', padding: 20, backgroundColor: colors.canvas}}>
-    <Card>
-      <Text style={headingStyle}>{t('Create access request')}</Text>
-      <Text style={bodyStyle}>{t('No access request exists for this account yet.')}</Text>
-      <TextInput value={fullName} onChangeText={setFullName} placeholder={t('Full name')} autoComplete="name" style={inputStyle}/>
-      <TextInput value={phone} onChangeText={setPhone} placeholder={t('Mobile number')} keyboardType="phone-pad" autoComplete="tel" style={inputStyle}/>
-      <Text style={{fontSize: 11, color: colors.inkMuted, marginTop: -4, marginBottom: 8}}>{t('Include country code, e.g. +91')}</Text>
-      <Text style={{fontSize: 11, color: colors.inkMuted, marginBottom: 8}}>{t('Your mobile number is contact information, not a sign-in credential.')}</Text>
-      <View style={{flexDirection: 'row', gap: 8, marginTop: 9, marginBottom: 12}}>
-        <View style={{flex: 1}}><ActionButton label="English" secondary={language !== 'en'} onPress={() => onLanguageChange('en')}/></View>
-        <View style={{flex: 1}}><ActionButton label="தமிழ்" secondary={language !== 'ta'} onPress={() => onLanguageChange('ta')}/></View>
-      </View>
-      <ActionButton label={busy ? '…' : t('Create access request')} onPress={() => void submit()} disabled={busy}/>
-      {error ? <Text accessibilityRole="alert" style={{fontSize: 12, color: colors.danger, marginTop: 9}}>{error}</Text> : null}
-      <Text style={[bodyStyle, {marginTop: 9}]}>{t('Your secure session is saved on this browser. You can return without asking for approval again.')}</Text>
-      <View style={{marginTop: 10}}><ActionButton label={t('Sign out')} onPress={onSignOut} secondary/></View>
-    </Card>
+    <View style={{width: '100%', maxWidth: 480, alignSelf: 'center'}}>
+      <AccessHeader language={language} onLanguageChange={onLanguageChange} onOwnerLogin={onOwnerLogin}/>
+      <Text style={{fontSize: 24, fontWeight: '900', color: colors.ink, textAlign: 'center', marginBottom: 20}}>KSK House Construction</Text>
+      <Card>
+        <TextInput value={phone} onChangeText={setPhone} placeholder={t('Mobile number')} keyboardType="phone-pad" autoComplete="tel" style={inputStyle}/>
+        <View style={{marginTop: 4}}><ActionButton label={t('Continue')} onPress={submit}/></View>
+        {error ? <Text accessibilityRole="alert" style={{fontSize: 12, color: colors.danger, marginTop: 9}}>{error}</Text> : null}
+      </Card>
+    </View>
   </ScrollView>;
 }
 
-export default function FamilyViewer() {
+export default function FamilyViewer({onOwnerLogin, onLanguageChange}: {
+  onOwnerLogin?: () => void;
+  onLanguageChange?: (value: ViewerLanguage) => void;
+}) {
   const [user, setUser] = useState<User | null>(null);
   const [access, setAccess] = useState<ViewerAccessRequest | null>(null);
   const [accessChecked, setAccessChecked] = useState(false);
@@ -551,9 +543,7 @@ export default function FamilyViewer() {
   const [languageReady, setLanguageReady] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState('');
-  const [activationChecked, setActivationChecked] = useState(false);
-  const [activationReady, setActivationReady] = useState(false);
-  const [activationError, setActivationError] = useState('');
+  const [mobileConfirmed, setMobileConfirmed] = useState(false);
   const [legacyCheckComplete, setLegacyCheckComplete] = useState(false);
   const [sheets, setSheets] = useState<SheetMap>({});
   const [sheetsLoading, setSheetsLoading] = useState(true);
@@ -581,9 +571,7 @@ export default function FamilyViewer() {
         setLegacyViewer(false);
         setLegacyCheckComplete(!next);
         setOwnerAccount(false);
-        setActivationChecked(!next);
-        setActivationReady(false);
-        setActivationError('');
+        setMobileConfirmed(false);
         setLanguageReady(!next);
       });
     }).catch(issue => {
@@ -667,34 +655,10 @@ export default function FamilyViewer() {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user || !access || access.status !== 'approved' || legacyViewer) {
-      setActivationReady(legacyViewer);
-      setActivationChecked(true);
-      setActivationError('');
-      return;
-    }
+    setMobileConfirmed(false);
+  }, [user?.uid, access?.status, access?.normalizedMobileNumber]);
 
-    let active = true;
-    setActivationChecked(false);
-    setActivationReady(false);
-    setActivationError('');
-    void getIdTokenResult(user).then(token => {
-      const authTime = Math.floor(Date.parse(token.authTime) / 1000);
-      const approvalTime = typeof access.approvalDate?.seconds === 'number'
-        ? access.approvalDate.seconds
-        : Math.floor(new Date(access.approvalDate).getTime() / 1000);
-      if (active && Number.isFinite(authTime) && Number.isFinite(approvalTime)) {
-        setActivationReady(authTime > approvalTime);
-      }
-    }).catch(issue => {
-      if (active) setActivationError(issue?.message || text(language, 'Could not verify your approved sign-in. Sign out and sign in again.'));
-    }).finally(() => {
-      if (active) setActivationChecked(true);
-    });
-    return () => {active = false;};
-  }, [user?.uid, access?.status, access?.approvalDate, legacyViewer]);
-
-  const canRead = !!user && (legacyViewer || (access?.status === 'approved' && activationReady));
+  const canRead = !!user && (legacyViewer || (access?.status === 'approved' && mobileConfirmed));
   useEffect(() => {
     if (!canRead || !user || !db) {
       setSheets({});
@@ -722,6 +686,7 @@ export default function FamilyViewer() {
 
   const changeLanguage = async (value: ViewerLanguage) => {
     setLanguage(value);
+    onLanguageChange?.(value);
     try {
       savePreferredLanguage(window.localStorage, value);
       await AsyncStorage.setItem('ksk_app_language', value);
@@ -740,48 +705,46 @@ export default function FamilyViewer() {
 
   const t = (english: string) => text(language, english);
   if (!isFirebaseConfigured || !auth || !db) return <View style={{flex: 1, justifyContent: 'center', padding: 24, backgroundColor: colors.canvas}}>
-    <Card><Text style={headingStyle}>KSK House Construction</Text><Text style={bodyStyle}>{t('Email and password sign-in is unavailable. Please contact the project owner.')}</Text></Card>
+    <Card><Text style={headingStyle}>KSK House Construction</Text><Text style={bodyStyle}>{t('Secure family access is unavailable. Contact the project owner.')}</Text></Card>
   </View>;
   const viewerAuth = auth;
 
   if (!authReady) return <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas}}><ActivityIndicator color={colors.primary}/></View>;
   if (authError) return <View style={{flex: 1, justifyContent: 'center', padding: 24, backgroundColor: colors.canvas}}><Card><Text style={headingStyle}>{t('Secure browser storage is unavailable. Enable browser storage and reload to continue.')}</Text><Text style={bodyStyle}>{authError}</Text></Card></View>;
   if (!languageReady) return <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas}}><ActivityIndicator color={colors.primary}/></View>;
-  if (!user) return <AccessForm language={language} onLanguageChange={value => {
-    setLanguage(value);
-    try {
-      savePreferredLanguage(window.localStorage, value);
-      void AsyncStorage.setItem('ksk_app_language', value).catch(issue => {
-        setErrors(current => [...current, localizedError(issue, value, 'Could not save your language preference.')]);
-      });
-    } catch (issue: any) {
-      setErrors(current => [...current, localizedError(issue, language, 'Could not save your language preference.')]);
-    }
-  }} onSignIn={setUser} onRequestCreated={() => setAccessChecked(true)}/>;
+  if (!user) return <AccessForm
+    language={language}
+    onLanguageChange={value => void changeLanguage(value)}
+    onSignIn={setUser}
+    onRequestCreated={() => setAccessChecked(true)}
+    onOwnerLogin={onOwnerLogin}
+  />;
   if (!accessChecked || !legacyCheckComplete) return <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas}}><ActivityIndicator color={colors.primary}/><Text style={bodyStyle}>{t('Loading project records…')}</Text></View>;
   if (ownerAccount) return <View style={{flex: 1, justifyContent: 'center', padding: 20, backgroundColor: colors.canvas}}>
     <Card><Text style={headingStyle}>{t('Family viewer')}</Text><Text style={bodyStyle}>{t('An owner account is currently signed in. Sign out, then create a family viewer access request.')}</Text><View style={{marginTop: 14}}><ActionButton label={t('Sign out')} onPress={() => void signOut(viewerAuth)}/></View></Card>
   </View>;
   if (access?.status === 'pending') return <View style={{flex: 1, justifyContent: 'center', padding: 20, backgroundColor: colors.canvas}}>
-    <Card><Text style={headingStyle}>{t('Owner approval required')}</Text><Text style={bodyStyle}>{t('Your request is pending owner approval. Project information remains locked until approval.')}</Text><Text style={bodyStyle}>{access.fullName} · {access.normalizedMobileNumber}</Text><Text style={bodyStyle}>{t('Your secure session is saved on this browser. You can return without asking for approval again.')}</Text><View style={{marginTop: 14}}><ActionButton label={t('Sign out')} onPress={() => void signOut(viewerAuth)} secondary/></View></Card>
+    <Card><Text style={headingStyle}>{t('Your access request is awaiting owner approval.')}</Text><Text style={bodyStyle}>{t('Project information remains locked until approval.')}</Text><Text style={bodyStyle}>{t('Your secure session is saved on this browser. You can return without asking for approval again.')}</Text><View style={{marginTop: 14}}><ActionButton label={t('Sign out')} onPress={() => void signOut(viewerAuth)} secondary/></View></Card>
   </View>;
-  if (!access && !legacyViewer) return <FirstRegistration
+  if (!access && !legacyViewer) return <AccessForm
     user={user}
     language={language}
     onLanguageChange={value => void changeLanguage(value)}
-    onSignOut={() => void signOut(viewerAuth)}
+    onSignIn={setUser}
+    onRequestCreated={() => setAccessChecked(true)}
+    onOwnerLogin={onOwnerLogin}
   />;
   if (access?.status === 'rejected' || access?.status === 'revoked') return <View style={{flex: 1, justifyContent: 'center', padding: 20, backgroundColor: colors.canvas}}>
     <Card><Text style={headingStyle}>{t(access.status === 'revoked' ? 'Access revoked' : 'Access rejected')}</Text><Text style={bodyStyle}>{t('This account does not currently have family viewer access. Contact the project owner.')}</Text><Text style={bodyStyle}>{t('Your secure session is saved on this browser. You can return if the owner restores access.')}</Text><View style={{marginTop: 14}}><ActionButton label={t('Sign out')} onPress={() => void signOut(viewerAuth)} secondary/></View></Card>
   </View>;
-  if (access?.status === 'approved' && !activationChecked) return <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas}}><ActivityIndicator color={colors.primary}/><Text style={bodyStyle}>{t('Loading project records…')}</Text></View>;
-  if (access?.status === 'approved' && !activationReady) return <View style={{flex: 1, justifyContent: 'center', padding: 20, backgroundColor: colors.canvas}}>
-    <Card>
-      <Text style={headingStyle}>{t(activationError ? 'Could not verify your approved sign-in. Sign out and sign in again.' : 'Access approved — sign in again to activate.')}</Text>
-      <Text style={bodyStyle}>{activationError || t('Owner approval is complete. Sign out, then sign in again with your private email and password to activate viewer access.')}</Text>
-      <View style={{marginTop: 14}}><ActionButton label={t('Sign out')} onPress={() => void signOut(viewerAuth)} secondary/></View>
-    </Card>
-  </View>;
+  if (access?.status === 'approved' && !mobileConfirmed) return <ApprovedContinueForm
+    user={user}
+    request={access}
+    language={language}
+    onLanguageChange={value => void changeLanguage(value)}
+    onOwnerLogin={onOwnerLogin}
+    onContinue={() => setMobileConfirmed(true)}
+  />;
 
   return <FamilyData
     uid={user.uid}

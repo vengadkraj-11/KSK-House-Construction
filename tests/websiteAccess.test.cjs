@@ -11,6 +11,7 @@ const {
 test('website routing opens the family portal only on its route or for a viewer role', () => {
   assert.equal(shouldRenderFamilyViewer('/family', null), true);
   assert.equal(shouldRenderFamilyViewer('/family/', null), true);
+  assert.equal(shouldRenderFamilyViewer('/family', 'owner', true), false);
   assert.equal(shouldRenderFamilyViewer('/', 'viewer'), true);
   assert.equal(shouldRenderFamilyViewer('/', 'owner'), false);
   assert.equal(shouldRenderFamilyViewer('/', null), false);
@@ -42,13 +43,20 @@ test('owner login keeps email/password authentication and the owner membership g
   assert.match(app, /if \(role === 'owner'\) setScreen\('Settings'\)/);
 });
 
-test('signed-out website entry offers language, owner login, and family viewer login', () => {
+test('signed-out website opens the minimal family request form with a discreet owner link', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'App.tsx'), 'utf8');
   const viewer = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'FamilyViewer.tsx'), 'utf8');
-  assert.match(app, /function WebsiteAccessScreen/);
-  assert.match(app, /Preferred language/);
-  assert.match(app, /t\('Owner Login'/);
-  assert.match(app, /t\('Family Viewer Login'/);
+  assert.doesNotMatch(app, /function WebsiteAccessScreen/);
   assert.match(app, /webEntry === 'choices'/);
-  assert.match(viewer, /useState<'register' \| 'login'>\('login'\)/);
+  assert.match(app, /if \(webEntry === 'choices'\) return <FamilyViewer/);
+  assert.match(viewer, /function AccessHeader/);
+  assert.match(viewer, /text\(language, 'Owner Login'\)/);
+  assert.match(viewer, /TextInput value=\{fullName\}/);
+  assert.match(viewer, /TextInput value=\{phone\}/);
+  assert.doesNotMatch(viewer, /TextInput value=\{email\}/);
+  assert.doesNotMatch(viewer, /TextInput value=\{password\}/);
+  assert.match(viewer, /signInAnonymously\(auth\)/);
+  assert.match(viewer, /setPersistence\(browserAuth, browserLocalPersistence\)/);
+  assert.match(viewer, /canContinueWithApprovedSession\(user\.uid, request, phone\)/);
+  assert.match(viewer, /Your access request is awaiting owner approval\./);
 });

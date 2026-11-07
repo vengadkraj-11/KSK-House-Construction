@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "prebuild": "expo prebuild",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/recordMath.test.cjs tests/projectBackupValidation.test.cjs tests/websiteAccess.test.cjs tests/webFiles.test.cjs",
+    "test": "node --test tests/recordMath.test.cjs tests/projectBackupValidation.test.cjs tests/websiteAccess.test.cjs tests/webFiles.test.cjs tests/calculations.test.cjs tests/viewerAccess.test.cjs tests/paymentPdf.test.cjs",
     "test:rules": "firebase emulators:exec --only firestore,auth --project demo-ksk \"node --test tests/firestoreRules.test.cjs tests/authFlow.test.cjs\"",
     "build:preview": "eas build --platform android --profile preview",
     "build:production": "eas build --platform android --profile production",

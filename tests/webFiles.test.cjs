@@ -68,3 +68,42 @@ test('download helper fails closed when browser download APIs are unavailable', 
   const {downloadBase64File} = loadWebFiles(undefined, undefined, URL);
   assert.equal(downloadBase64File('YWJj', 'receipt.jpg', 'image/jpeg'), false);
 });
+
+test('payment PDF uses a user-gesture popup and prints the prepared receipt for Chrome Save as PDF', () => {
+  let opened = false;
+  let printed = false;
+  let written = '';
+  const printWindow = {
+    closed: false,
+    document: {
+      title: '',
+      body: {textContent: ''},
+      open() {},
+      write(html) { written = html; },
+      close() {}
+    },
+    focus() {},
+    print() { printed = true; },
+    onload: null
+  };
+  const window = {
+    open() { opened = true; return printWindow; }
+  };
+  const document = {};
+  const {openBrowserPrintWindow, printHtmlInWindow} = loadWebFiles(document, window, URL);
+
+  const popup = openBrowserPrintWindow();
+  assert.equal(opened, true);
+  assert.equal(popup, printWindow);
+  assert.equal(printWindow.document.title, 'Preparing PDF');
+  assert.equal(printHtmlInWindow('<html><body>Payment receipt</body></html>', 'KSK Payment Receipt P-1', popup), true);
+  assert.match(written, /Payment receipt/);
+  assert.equal(printWindow.document.title, 'KSK Payment Receipt P-1');
+  printWindow.onload();
+  assert.equal(printed, true);
+});
+
+test('payment PDF reports when Chrome blocks the required pop-up', () => {
+  const {openBrowserPrintWindow} = loadWebFiles({}, {open: () => null}, URL);
+  assert.equal(openBrowserPrintWindow(), null);
+});

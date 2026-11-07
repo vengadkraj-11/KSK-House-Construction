@@ -52,6 +52,41 @@ export function printHtmlInBrowser(html: string): boolean {
   }
 }
 
+export function openBrowserPrintWindow(): Window | null {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+
+  try {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return null;
+    printWindow.document.title = 'Preparing PDF';
+    printWindow.document.body.textContent = 'Preparing PDF…';
+    return printWindow;
+  } catch {
+    return null;
+  }
+}
+
+export function printHtmlInWindow(html: string, title: string, printWindow: Window): boolean {
+  if (typeof window === 'undefined' || printWindow.closed) return false;
+
+  try {
+    let started = false;
+    printWindow.onload = () => {
+      if (started || printWindow.closed) return;
+      started = true;
+      printWindow.focus();
+      printWindow.print();
+    };
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.document.title = title;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function downloadTextFile(
   content: string,
   filename: string,

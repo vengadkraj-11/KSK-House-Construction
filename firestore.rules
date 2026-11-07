@@ -19,9 +19,9 @@ service cloud.firestore {
         && request.auth.token.firebase.sign_in_provider == 'phone'
         && request.auth.token.get('phone_number', '') is string;
     }
-    function hasPasswordAuth() {
+    function hasFamilyAuth() {
       return signedIn()
-        && request.auth.token.firebase.sign_in_provider == 'password';
+        && request.auth.token.firebase.sign_in_provider in ['anonymous', 'password'];
     }
     function hasApprovedViewerAccess(projectId) {
       let accessPath = viewerAccessPath(request.auth.uid);
@@ -29,9 +29,7 @@ service cloud.firestore {
         && projectId == 'ksk'
         && exists(accessPath)
         && get(accessPath).data.get('status', null) == 'approved'
-        && get(accessPath).data.get('approvalDate', null) is timestamp
-        && request.auth.token.get('auth_time', 0) is int
-        && request.auth.token.get('auth_time', 0) > get(accessPath).data.approvalDate.seconds();
+        && get(accessPath).data.get('approvalDate', null) is timestamp;
     }
     function hasLegacyProjectAccess(projectId) {
       let accessPath = viewerAccessPath(request.auth.uid);
@@ -49,20 +47,23 @@ service cloud.firestore {
     function isOwner(projectId) {
       return signedIn() && memberRole(projectId) == 'owner';
     }
-    function canReadViewerSheet(projectId, sheetId) {
-      return isOwner(projectId)
-        || (hasApprovedViewerAccess(projectId) && sheetId in [
+    function isViewerSheet(sheetId) {
+      return sheetId in [
           'project_dashboard', 'project_setup', 'materials_ground',
           'materials_first', 'materials_boq', 'labour_work',
           'professional_fees', 'misc_equipment', 'daily_expenses',
           'work_schedule', 'floor_summary'
-        ])
-        || hasLegacyProjectAccess(projectId);
+        ];
+    }
+    function canReadViewerSheet(projectId, sheetId) {
+      return isOwner(projectId)
+        || (isViewerSheet(sheetId)
+          && (hasApprovedViewerAccess(projectId) || hasLegacyProjectAccess(projectId)));
     }
     function validViewerRequestCreate(uid) {
       let data = request.resource.data;
       let phone = data.get('normalizedMobileNumber', '');
-      return hasPasswordAuth()
+      return hasFamilyAuth()
         && uid == request.auth.uid
         && data.keys().hasAll(['uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage', 'registeredAt', 'createdAt'])
         && data.keys().hasOnly(['uid', 'fullName', 'normalizedMobileNumber', 'status', 'preferredLanguage', 'registeredAt', 'createdAt'])
@@ -228,11 +229,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // All project members can view receipt and diary photos. Only owners can write.
+    // Viewers can access bill receipts only; site photos remain owner-only.
     match /projects/{projectId}/{attachmentGroup}/{recordId}/images/{imageId} {
-      allow read: if (attachmentGroup == 'bills' && hasApprovedViewerAccess(projectId))
-        || (attachmentGroup in ['bills', 'attachments']
-          && (isOwner(projectId) || hasLegacyProjectAccess(projectId)));
+      allow read: if (attachmentGroup == 'bills'
+          && (isOwner(projectId) || hasApprovedViewerAccess(projectId) || hasLegacyProjectAccess(projectId)))
+        || (attachmentGroup == 'attachments' && isOwner(projectId));
       allow create: if attachmentGroup in ['bills', 'attachments'] && isOwner(projectId)
         && request.resource.data.keys().hasAll(['recordId', 'imageBase64', 'fileName', 'mimeType', 'createdBy', 'createdAt'])
         && request.resource.data.keys().hasOnly(['recordId', 'imageBase64', 'fileName', 'mimeType', 'createdBy', 'createdAt', 'restoredCreatedAt'])
@@ -301,7 +302,7 @@ service cloud.firestore {
       allow update, delete: if isOwner(projectId);
     }
     match /projects/{projectId}/diary/{recordId} {
-      allow read: if isOwner(projectId) || hasLegacyProjectAccess(projectId);
+      allow read: if isOwner(projectId);
       allow create: if isOwner(projectId)
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.createdAt == request.time;
@@ -351,9 +352,8 @@ service cloud.firestore {
     // Login sessions: each member can create and update only their own
     // session's last-active timestamp. Owners can review project-wide history.
     match /projects/{projectId}/login_history/{sessionId} {
-      allow read: if isOwner(projectId)
-        || (hasLegacyProjectAccess(projectId) && resource.data.userId == request.auth.uid);
-      allow create: if (isOwner(projectId) || hasLegacyProjectAccess(projectId))
+      allow read: if isOwner(projectId);
+      allow create: if isOwner(projectId)
         && request.resource.data.keys().hasAll([
           'userId', 'email', 'displayName', 'role', 'installationId',
           'deviceModel', 'deviceManufacturer', 'deviceName', 'platform',
@@ -375,7 +375,7 @@ service cloud.firestore {
         && request.resource.data.deviceManufacturer is string
         && request.resource.data.deviceName is string
         && request.resource.data.platform is string;
-      allow update: if (isOwner(projectId) || hasLegacyProjectAccess(projectId))
+      allow update: if isOwner(projectId)
         && resource.data.userId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAt'])
         && request.resource.data.lastActiveAt == request.time;
@@ -383,7 +383,7 @@ service cloud.firestore {
     }
 
     match /projects/{projectId}/activity/{activityId} {
-      allow read: if isOwner(projectId) || hasLegacyProjectAccess(projectId);
+      allow read: if isOwner(projectId);
 
       // Only the project owner can create activity records.
       // The actor UID and server timestamp must match the authenticated request.

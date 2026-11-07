@@ -3,7 +3,9 @@ const LEGACY_LANGUAGE_KEY = 'ksk_family_language';
 
 function shouldRenderFamilyViewer(pathname, role, authenticated = false) {
   const normalizedPath = String(pathname || '').replace(/\/+$/, '') || '/';
-  return normalizedPath === '/family' || role === 'viewer' || (authenticated && role !== 'owner');
+  return (normalizedPath === '/family' && role !== 'owner') ||
+    role === 'viewer' ||
+    (authenticated && role !== 'owner');
 }
 
 function getPreferredLanguage(storage, legacyKey = LEGACY_LANGUAGE_KEY) {

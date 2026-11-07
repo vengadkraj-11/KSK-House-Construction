@@ -25,3 +25,12 @@ test('family registration credential supports a returning password login with th
   assert.equal(returning.localId, registered.localId);
   assert.ok(returning.idToken);
 });
+
+test('anonymous family session is authenticated and resolves to its same UID', async () => {
+  const registered = await post('signUp', {returnSecureToken: true});
+  assert.ok(registered.localId);
+  assert.ok(registered.idToken);
+
+  const lookup = await post('lookup', {idToken: registered.idToken});
+  assert.equal(lookup.users[0].localId, registered.localId);
+});
